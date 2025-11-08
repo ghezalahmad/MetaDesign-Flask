@@ -1,0 +1,14 @@
+numpy
+pandas
+torch
+scikit-learn
+scipy
+plotly
+scikit-optimize
+seaborn
+openai
+pytest
+pytest-cov
+playwright
+lolopy
+flask
