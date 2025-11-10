@@ -5,7 +5,7 @@ from lolopy.learners import RandomForestRegressor
 import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
-from app.utils import calculate_novelty
+from app.utils.utils import calculate_novelty
 
 class LolopyRFModel:
     """
