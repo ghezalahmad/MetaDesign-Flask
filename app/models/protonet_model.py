@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.cluster import KMeans
-import streamlit as st
+#import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.utils.utils import calculate_novelty

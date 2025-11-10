@@ -5,7 +5,6 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel, WhiteKernel
-import streamlit as st
 from app.utils.utils import enforce_diversity, calculate_novelty
 
 def _calculate_ucb(mu, sigma, kappa_adjusted):
