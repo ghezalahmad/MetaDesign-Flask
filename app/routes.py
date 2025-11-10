@@ -1,67 +1,74 @@
+import logging
+logging.debug("Importing flask")
 from flask import Blueprint, render_template, request, jsonify, session
+logging.debug("Importing os")
 import os
+logging.debug("Importing secure_filename")
 from werkzeug.utils import secure_filename
+logging.debug("Importing pandas")
 import pandas as pd
 #from app.models.maml_model import MAMLModel, evaluate_maml
 from app.models.models import MAMLModel, evaluate_maml
 
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
+logging.debug("Importing ProtoNetModel")
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
+logging.debug("Importing RFModel")
 from app.models.rf_model import RFModel, train_rf_model, evaluate_rf_model
+logging.debug("Importing PINNModel")
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
+logging.debug("Importing LolopyRFModel")
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
+logging.debug("Importing weighted_uncertainty_ensemble")
 from app.models.ensemble import weighted_uncertainty_ensemble
+logging.debug("Importing numpy")
 import numpy as np
+logging.debug("Importing TSNE")
+from sklearn.manifold import TSNE
+logging.debug("Finished imports")
 
 main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('dashboard.html')
 
-@main_bp.route('/data-setup', methods=['GET', 'POST'])
-def data_setup():
-    if request.method == 'POST':
-        if 'dataset' not in request.files:
-            return jsonify({'success': False, 'error': 'No file part'})
-        file = request.files['dataset']
-        if file.filename == '':
-            return jsonify({'success': False, 'error': 'No selected file'})
-        if file:
-            filename = secure_filename(file.filename)
-            upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
-            if not os.path.exists(upload_folder):
-                os.makedirs(upload_folder)
-            filepath = os.path.join(upload_folder, filename)
-            file.save(filepath)
-            session['filepath'] = filepath
+@main_bp.route('/upload', methods=['POST'])
+def upload_data():
+    if 'dataset' not in request.files:
+        return jsonify({'success': False, 'error': 'No file part'})
+    file = request.files['dataset']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No selected file'})
+    if file:
+        filename = secure_filename(file.filename)
+        upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
+        filepath = os.path.join(upload_folder, filename)
+        file.save(filepath)
+        session['filepath'] = filepath
 
-            data = pd.read_csv(filepath)
-            session['data_columns'] = data.columns.tolist()
-            return jsonify({'success': True, 'columns': data.columns.tolist()})
-
-    return render_template('data_setup.html')
-
-@main_bp.route('/experimentation')
-def experimentation():
-    data_columns = session.get('data_columns', [])
-    return render_template('experimentation.html', columns=data_columns)
+        data = pd.read_csv(filepath)
+        session['data_columns'] = data.columns.tolist()
+        return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
 
 @main_bp.route('/run-experiment', methods=['POST'])
 def run_experiment():
     filepath = session.get('filepath')
     if not filepath or not os.path.exists(filepath):
-        return render_template('experimentation.html', error="Please upload a dataset first.")
+        return jsonify({'success': False, 'error': 'Please upload a dataset first.'})
 
     data = pd.read_csv(filepath)
-    model_name = request.form.get('model')
-    curiosity = float(request.form.get('curiosity', 0.5))
-    input_columns = request.form.getlist('input_columns')
-    target_columns = request.form.getlist('target_columns')
+    config = request.get_json()
+    model_name = config.get('model')
+    curiosity = float(config.get('curiosity', 0.5))
+    input_columns = config.get('input_columns')
+    target_columns_config = config.get('target_columns')
 
-    weights = np.array([float(w) for w in request.form.getlist('weights')])
-    max_or_min = request.form.getlist('max_or_min')
-
+    target_columns = [t['name'] for t in target_columns_config]
+    weights = np.array([float(t['weight']) for t in target_columns_config])
+    max_or_min = [t['optimization'] for t in target_columns_config]
 
     if model_name == 'maml':
         model = MAMLModel(input_size=len(input_columns), output_size=len(target_columns))
@@ -109,18 +116,50 @@ def run_experiment():
             weights_targets=weights, max_or_min_targets=max_or_min
         )
     elif model_name == 'ensemble':
-        # You'll need to define how to create the ensemble of models
-        models = {} # This needs to be populated with trained models
+        # Train PINN model for the ensemble
+        pinn_model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
+        pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(
+            pinn_model, data, input_columns, target_columns, epochs=100, learning_rate=0.001, physics_loss_weight=0.1, batch_size=32
+        )
+
+        # Train RF model for the ensemble
+        rf_model, rf_scaler_x, rf_scaler_y = train_rf_model(data, input_columns, target_columns)
+
+        models = {
+            'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y),
+            'rf': (rf_model, rf_scaler_x, rf_scaler_y)
+        }
+
         results_df, _ = weighted_uncertainty_ensemble(
             models=models, data=data, input_columns=input_columns,
             target_columns=target_columns, curiosity=curiosity,
             weights=weights, max_or_min_objectives=max_or_min
         )
     else:
-        results_df = None
+        results_df = pd.DataFrame()
 
-    results_html = results_df.to_html(classes='table table-striped', index=False) if results_df is not None else "<p>No results to display.</p>"
-    data_columns = session.get('data_columns', [])
+    # Generate visualization data
+    tsne_data = None
+    if not data[input_columns].empty:
+        tsne = TSNE(n_components=2, random_state=42)
+        tsne_results = tsne.fit_transform(data[input_columns])
+        tsne_data = {
+            'x': tsne_results[:, 0].tolist(),
+            'y': tsne_results[:, 1].tolist(),
+        }
 
-    return render_template('experimentation.html', results=results_html, columns=data_columns)
+    scatter_data = None
+    if not results_df.empty and len(target_columns) > 0:
+        scatter_data = {
+            'x': results_df[target_columns[0]].tolist(),
+            'y': results_df['uncertainty'].tolist() if 'uncertainty' in results_df else [],
+            'labels': results_df.index.tolist()
+        }
+
+    return jsonify({
+        'success': True,
+        'results_table': results_df.to_html(classes='table table-striped', index=False),
+        'tsne_data': tsne_data,
+        'scatter_data': scatter_data
+    })
 
