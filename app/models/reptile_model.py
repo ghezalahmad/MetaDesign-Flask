@@ -6,9 +6,8 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
 import streamlit as st
-
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
-from app.utils import calculate_novelty
+from app.utils.utils import calculate_novelty
 
 class ReptileModel(nn.Module):
     def __init__(self, input_size, output_size, hidden_size=256, num_layers=3, dropout_rate=0.3):
@@ -101,21 +100,29 @@ def reptile_train(model, data, input_columns, target_columns, epochs, learning_r
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     loss_function = nn.MSELoss()
 
-    progress_bar = st.progress(0)
-    for epoch in range(epochs):
-        progress_bar.progress((epoch + 1) / epochs)
-        model.train()
+    # Meta-learning loop
+    for meta_epoch in range(epochs):
+        # Create a copy of the model
+        weights_before = model.state_dict()
         
-        # Simple training loop, not meta-learning for now
-        for i in range(0, len(inputs_tensor), batch_size):
-            batch_inputs = inputs_tensor[i:i+batch_size]
-            batch_targets = targets_tensor[i:i+batch_size]
+        # Sample a task (a batch of data)
+        indices = torch.randperm(len(inputs_tensor))
+        task_indices = indices[:batch_size]
+        task_inputs = inputs_tensor[task_indices]
+        task_targets = targets_tensor[task_indices]
 
+        # Inner loop optimization
+        for _ in range(5):  # 5 steps per task
             optimizer.zero_grad()
-            predictions = model(batch_inputs)
-            loss = loss_function(predictions, batch_targets)
+            predictions = model(task_inputs)
+            loss = loss_function(predictions, task_targets)
             loss.backward()
             optimizer.step()
+
+        # Reptile update
+        weights_after = model.state_dict()
+        model.load_state_dict({name: weights_before[name] + (weights_after[name] - weights_before[name]) * 0.1 for name in weights_before})
+
 
     model.is_trained = True
     model.scaler_x = scaler_x
@@ -126,7 +133,7 @@ def reptile_train(model, data, input_columns, target_columns, epochs, learning_r
 
 def evaluate_reptile(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     labeled_data = data.dropna(subset=target_columns)
-    candidate_df = data[data[target_columns[0]].isnull()].copy()
+    candidate_df = data[data[target_columns][0].isnull()].copy()
 
     if candidate_df.empty:
         st.warning("No candidate samples to evaluate.")

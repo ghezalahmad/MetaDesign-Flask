@@ -178,6 +178,8 @@ def multi_objective_bayesian_optimization(
 
     candidate_inputs_df = pd.DataFrame(candidate_inputs, columns=input_columns) if isinstance(candidate_inputs, np.ndarray) and input_columns else candidate_inputs
 
+    acq_values_total = np.zeros(len(candidate_inputs_df))
+
     if surrogate_model:
         all_mu_orig, all_sigma_orig = surrogate_model.predict_with_uncertainty(candidate_inputs_df, input_columns=input_columns)
 
@@ -186,8 +188,6 @@ def multi_objective_bayesian_optimization(
 
         novelty_scores = calculate_novelty(candidate_inputs_df.values, train_inputs.values if isinstance(train_inputs, pd.DataFrame) else train_inputs)
 
-        # Use SLAMD utility calculation for each objective
-        acq_values_total = np.zeros(len(candidate_inputs_df))
         for i in range(train_targets.shape[1]):
             predictions = all_mu_orig[:, i]
             uncertainties = all_sigma_orig[:, i] if all_sigma_orig.shape[1] > 1 else all_sigma_orig.ravel()
@@ -201,6 +201,33 @@ def multi_objective_bayesian_optimization(
 
         return acq_values_total
 
-    else: # Fallback to individual GPs
-        # ... (implementation for individual GPs remains the same)
-        return np.random.rand(len(candidate_inputs_df))
+    else:
+        train_inputs_np = train_inputs.values if isinstance(train_inputs, pd.DataFrame) else train_inputs
+        candidate_inputs_np = candidate_inputs_df.values
+
+        for i in range(train_targets.shape[1]):
+            y_obj_single = train_targets[:, i].reshape(-1, 1)
+            valid_indices_obj = np.isfinite(y_obj_single.flatten())
+            y_valid_obj_for_gp = y_obj_single[valid_indices_obj]
+            X_valid_obj_for_gp = train_inputs_np[valid_indices_obj]
+
+            if len(X_valid_obj_for_gp) == 0: continue
+
+            kernel_gp = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=0.1)
+            gp_optimizer = BayesianOptimizer(kernel=kernel_gp, normalize_y=True)
+            gp_optimizer.fit(X_valid_obj_for_gp, y_valid_obj_for_gp)
+
+            acq_obj_values_i = gp_optimizer.acquisition_function(
+                candidate_inputs_np,
+                acquisition=acquisition,
+                curiosity=curiosity
+            )
+
+            if max_or_min[i].lower() == "min":
+                mu_norm, sigma_norm = gp_optimizer._predict_with_internal_gp(candidate_inputs_np, return_std=True)
+                kappa_adjusted = 2.0 * (1.0 + 0.5 * curiosity)
+                acq_obj_values_i = mu_norm.ravel() - kappa_adjusted * sigma_norm.ravel()
+
+            acq_values_total += weights[i] * acq_obj_values_i.flatten()
+
+        return acq_values_total
