@@ -70,7 +70,7 @@
                     </div>
                     <div class="col-md-4">
                         <h5 class="card-title">Target Properties</h5>
-                        <select multiple class="form-control" id="target-columns" size="8"></select>
+                        <div id="target-properties-container"></div>
                     </div>
                     <div class="col-md-4">
                         <h5 class="card-title">A priori Information (optional)</h5>
@@ -108,6 +108,13 @@
                 <div class="text-center mt-4">
                     <button class="btn btn-primary" id="run-experiment-button">Run experiment with given configuration</button>
                 </div>
+            </div>
+        </div>
+
+        <div class="card mt-4" id="results-card" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">Results</h5>
+                <div id="results-table-container"></div>
             </div>
         </div>
 

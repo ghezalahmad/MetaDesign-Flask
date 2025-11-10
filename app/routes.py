@@ -7,9 +7,9 @@ logging.debug("Importing secure_filename")
 from werkzeug.utils import secure_filename
 logging.debug("Importing pandas")
 import pandas as pd
-#from app.models.maml_model import MAMLModel, evaluate_maml
+logging.debug("Importing MAMLModel")
 from app.models.models import MAMLModel, evaluate_maml
-
+logging.debug("Importing ReptileModel")
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
 logging.debug("Importing ProtoNetModel")
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train

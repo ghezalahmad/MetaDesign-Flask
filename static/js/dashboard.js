@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const uploadButton = document.getElementById('upload-button');
     const datasetTableBody = document.getElementById('dataset-table-body');
     const inputColumns = document.getElementById('input-columns');
-    const targetColumns = document.getElementById('target-columns');
+    const targetPropertiesContainer = document.getElementById('target-properties-container');
     const aprioriColumns = document.getElementById('apriori-columns');
     const modelSelect = document.getElementById('model-select');
     const curiositySlider = document.getElementById('curiosity-slider');
@@ -89,32 +89,94 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function populateColumnSelectors(columns) {
-        [inputColumns, targetColumns, aprioriColumns].forEach(selector => {
-            selector.innerHTML = '';
-            columns.forEach(col => {
-                const option = document.createElement('option');
-                option.value = col;
-                option.textContent = col;
-                selector.appendChild(option);
-            });
+        // Initial population
+        updateOptions(inputColumns, columns, []);
+        updateOptions(targetColumns, columns, []);
+        updateOptions(aprioriColumns, columns, []);
+    }
+
+    function updateCascadingSelectors() {
+        const selectedInputs = Array.from(inputColumns.selectedOptions).map(opt => opt.value);
+        const selectedTargets = Array.from(targetColumns.selectedOptions).map(opt => opt.value);
+
+        const availableForTargets = allColumns.filter(col => !selectedInputs.includes(col));
+        updateOptions(targetColumns, availableForTargets, selectedTargets);
+
+        const availableForApriori = allColumns.filter(col => !selectedInputs.includes(col) && !selectedTargets.includes(col));
+        updateOptions(aprioriColumns, availableForApriori, Array.from(aprioriColumns.selectedOptions).map(opt => opt.value));
+    }
+
+    function updateOptions(selectElement, options, selectedValues) {
+        selectElement.innerHTML = '';
+        options.forEach(col => {
+            const option = document.createElement('option');
+            option.value = col;
+            option.textContent = col;
+            if (selectedValues.includes(col)) {
+                option.selected = true;
+            }
+            selectElement.appendChild(option);
         });
     }
 
+    inputColumns.addEventListener('change', updateCascadingSelectors);
+
     function getTargetColumnConfig() {
         const config = [];
-        Array.from(targetColumns.selectedOptions).forEach(option => {
-            config.push({
-                name: option.value,
-                weight: 1.0, // Default weight
-                optimization: 'max' // Default optimization
-            });
+        const targetGroups = document.querySelectorAll('.target-group');
+        targetGroups.forEach(group => {
+            const select = group.querySelector('select[name="target_columns"]');
+            const weight = group.querySelector('input[name="weights"]');
+            const optimization = group.querySelector('select[name="max_or_min"]');
+            if (select.value) {
+                config.push({
+                    name: select.value,
+                    weight: parseFloat(weight.value),
+                    optimization: optimization.value
+                });
+            }
         });
         return config;
     }
 
+    function addTargetProperty() {
+        const index = targetPropertiesContainer.children.length;
+        const newTargetGroup = document.createElement('div');
+        newTargetGroup.classList.add('mb-3', 'target-group');
+        const availableColumns = allColumns.filter(col => !Array.from(inputColumns.selectedOptions).map(opt => opt.value).includes(col));
+
+        let options = '';
+        availableColumns.forEach(col => {
+            options += `<option value="${col}">${col}</option>`;
+        });
+
+        newTargetGroup.innerHTML = `
+            <div class="input-group">
+                <select class="form-select" name="target_columns">${options}</select>
+                <input type="number" class="form-control" name="weights" value="1.0" step="0.1">
+                <select class="form-select" name="max_or_min">
+                    <option value="max">Maximize</option>
+                    <option value="min">Minimize</option>
+                </select>
+                <button class="btn btn-danger" type="button" onclick="this.parentElement.parentElement.remove()">Remove</button>
+            </div>
+        `;
+        targetPropertiesContainer.appendChild(newTargetGroup);
+        newTargetGroup.querySelector('select[name="target_columns"]').addEventListener('change', updateCascadingSelectors);
+    }
+
+    const addTargetButton = document.createElement('button');
+    addTargetButton.textContent = 'Add Target Property';
+    addTargetButton.classList.add('btn', 'btn-secondary', 'mb-3');
+    addTargetButton.addEventListener('click', addTargetProperty);
+    targetPropertiesContainer.insertAdjacentElement('beforebegin', addTargetButton);
+
     function displayResults(data) {
-        resultsTable.innerHTML = data.results_table;
-        document.querySelector('.col-md-8 h3').insertAdjacentElement('afterend', resultsTable);
+        const resultsCard = document.getElementById('results-card');
+        const resultsTableContainer = document.getElementById('results-table-container');
+
+        resultsTableContainer.innerHTML = data.results_table;
+        resultsCard.style.display = 'block';
 
         if (data.tsne_data) {
             Plotly.newPlot('tsne-plot', [{
