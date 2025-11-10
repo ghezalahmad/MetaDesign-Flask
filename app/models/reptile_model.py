@@ -5,7 +5,7 @@ import torch.optim as optim
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
-import streamlit as st
+#import streamlit as st
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.utils.utils import calculate_novelty
 

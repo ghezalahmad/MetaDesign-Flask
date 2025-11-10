@@ -2,7 +2,9 @@ from flask import Blueprint, render_template, request, jsonify, session
 import os
 from werkzeug.utils import secure_filename
 import pandas as pd
-from app.models.maml_model import MAMLModel, evaluate_maml
+#from app.models.maml_model import MAMLModel, evaluate_maml
+from app.models.models import MAMLModel, evaluate_maml
+
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
 from app.models.rf_model import RFModel, train_rf_model, evaluate_rf_model
