@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -5,8 +6,10 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
 import streamlit as st
-from app.utils import calculate_utility, calculate_novelty
+
+from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.pinn_utils import compute_physics_loss
+from app.utils import calculate_novelty
 
 class PINNModel(nn.Module):
     def __init__(self, input_size, output_size, hidden_size=128, num_layers=3, dropout_rate=0.3):
@@ -21,26 +24,30 @@ class PINNModel(nn.Module):
             layers.append(nn.Dropout(dropout_rate))
         layers.append(nn.Linear(hidden_size, output_size))
         self.net = nn.Sequential(*layers)
+        self.is_trained = False
+        self.scaler_x = None
+        self.scaler_y = None
 
     def forward(self, x):
         return self.net(x)
 
-    def predict_with_uncertainty(self, X_input: pd.DataFrame | np.ndarray, input_columns: list[str], num_samples=30, dropout_rate=0.3):
-        if not getattr(self, 'is_trained', False) or self.scaler_x is None or self.scaler_y is None:
-            raise RuntimeError("Model is not trained yet or scalers are missing. Call pinn_train first.")
+    def predict(self, X_input: pd.DataFrame | np.ndarray):
+        """Generates predictions without uncertainty."""
+        mean_preds, _ = self.predict_with_uncertainty(X_input, num_samples=1)
+        return mean_preds
 
-        self.train()  # Enable dropout for MC samples
+    def predict_with_uncertainty(self, X_input: pd.DataFrame | np.ndarray, input_columns=None, num_samples=30, dropout_rate=0.3):
+        if not self.is_trained or self.scaler_x is None or self.scaler_y is None:
+            raise RuntimeError("Model is not trained yet or scalers are missing.")
 
-        # Set dropout rate for all dropout layers
+        self.train()
         for module in self.modules():
             if isinstance(module, torch.nn.Dropout):
                 module.p = dropout_rate
 
-        # Handle both DataFrame and numpy array inputs
         if isinstance(X_input, pd.DataFrame):
-            # Ensure the column order matches the order used to fit the scaler
             X_processed = X_input[self.scaler_x.feature_names_in_].values
-        else:  # Assumes numpy array
+        else:
             X_processed = X_input
 
         X_scaled_np = self.scaler_x.transform(X_processed)
@@ -49,29 +56,18 @@ class PINNModel(nn.Module):
         with torch.no_grad():
             predictions_scaled = [self(X_tensor).numpy() for _ in range(num_samples)]
 
-        predictions_scaled = np.array(predictions_scaled) # Shape: (num_samples, num_points, num_targets)
+        predictions_scaled = np.array(predictions_scaled)
+        mean_predictions_scaled = predictions_scaled.mean(axis=0)
+        std_dev_scaled = predictions_scaled.std(axis=0)
 
-        # Calculate mean and standard deviation in scaled space
-        mean_predictions_scaled = predictions_scaled.mean(axis=0) # Shape: (num_points, num_targets)
-        std_dev_scaled = predictions_scaled.std(axis=0) # Shape: (num_points, num_targets)
+        mean_predictions_original = self.scaler_y.inverse_transform(mean_predictions_scaled)
+        std_dev_original = std_dev_scaled * self.scaler_y.scale_
 
-        # Inverse transform mean predictions to original scale
-        mean_predictions_original_scale = self.scaler_y.inverse_transform(mean_predictions_scaled)
+        return mean_predictions_original, std_dev_original
 
-        # Inverse transform standard deviation
-        std_dev_original_scale = std_dev_scaled * self.scaler_y.scale_
-
-        # For utility calculation, we need a single uncertainty value per sample.
-        # If we have multiple targets, we average the uncertainty (std dev) across them.
-        if std_dev_original_scale.ndim > 1 and std_dev_original_scale.shape[1] > 1:
-            uncertainty_per_sample = np.mean(std_dev_original_scale, axis=1)
-        else:
-            uncertainty_per_sample = std_dev_original_scale
-
-        # Ensure the final uncertainty is a column vector
-        uncertainty_per_sample = uncertainty_per_sample.reshape(-1, 1)
-
-        return mean_predictions_original_scale, uncertainty_per_sample
+    def _get_input_columns(self):
+        """Returns the input columns used for training."""
+        return self.scaler_x.feature_names_in_ if self.scaler_x else None
 
 def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate, physics_loss_weight, batch_size):
     labeled_data = data.dropna(subset=target_columns)
@@ -81,24 +77,21 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
     inputs = scaler_x.transform(labeled_data[input_columns])
     targets = scaler_y.transform(labeled_data[target_columns])
 
-    inputs = torch.tensor(inputs, dtype=torch.float32)
-    targets = torch.tensor(targets, dtype=torch.float32)
+    inputs_tensor = torch.tensor(inputs, dtype=torch.float32)
+    targets_tensor = torch.tensor(targets, dtype=torch.float32)
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     loss_function = nn.MSELoss()
 
     for epoch in range(epochs):
-        for i in range(0, len(inputs), batch_size):
-            batch_inputs = inputs[i:i+batch_size]
-            batch_targets = targets[i:i+batch_size]
+        for i in range(0, len(inputs_tensor), batch_size):
+            batch_inputs = inputs_tensor[i:i+batch_size]
+            batch_targets = targets_tensor[i:i+batch_size]
 
             optimizer.zero_grad()
             predictions = model(batch_inputs)
             data_loss = loss_function(predictions, batch_targets)
-
-            # Placeholder for physics loss
             physics_loss = compute_physics_loss(predictions, batch_inputs)
-
             loss = data_loss + physics_loss_weight * physics_loss
             loss.backward()
             optimizer.step()
@@ -106,50 +99,59 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
     model.is_trained = True
     model.scaler_x = scaler_x
     model.scaler_y = scaler_y
+    # Store feature names in scaler_x for compatibility
+    model.scaler_x.feature_names_in_ = input_columns
+
 
     return model, scaler_x, scaler_y
 
 def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
-    unlabeled_data = data[data[target_columns].isna().any(axis=1)]
-    if unlabeled_data.empty:
-        st.warning("No unlabeled samples available for evaluation.")
-        return None
+    labeled_data = data.dropna(subset=target_columns)
+    candidate_df = data[data[target_columns[0]].isnull()].copy()
 
-    predictions, uncertainty_scores = model.predict_with_uncertainty(unlabeled_data, input_columns)
+    if candidate_df.empty:
+        st.warning("No candidate samples to evaluate.")
+        return pd.DataFrame()
 
-    labeled_inputs = model.scaler_x.transform(data.dropna(subset=target_columns)[input_columns])
-    novelty_scores = calculate_novelty(model.scaler_x.transform(unlabeled_data[input_columns]), labeled_inputs)
+    train_inputs = labeled_data[input_columns]
+    train_targets = labeled_data[target_columns].values
+    candidate_inputs = candidate_df[input_columns]
 
-    utility_scores = calculate_utility(
-        predictions,
-        uncertainty_scores,
-        novelty_scores,
-        curiosity,
-        weights,
-        max_or_min
+    st.info("Using Bayesian Optimization with PINN surrogate to score candidates.")
+
+    utility_scores = multi_objective_bayesian_optimization(
+        train_inputs=train_inputs,
+        train_targets=train_targets,
+        candidate_inputs=candidate_inputs,
+        weights=np.array(weights),
+        max_or_min=max_or_min,
+        curiosity=curiosity,
+        acquisition="UCB",
+        strategy="weighted_sum",
+        surrogate_model=model,
+        input_columns=input_columns
     )
 
-    result_df = unlabeled_data.copy()
-    result_df["Utility"] = utility_scores
-    result_df["Uncertainty"] = uncertainty_scores
-    result_df["Novelty"] = novelty_scores
-    result_df["Exploration"] = result_df["Uncertainty"] * result_df["Novelty"]
-    result_df["Exploitation"] = 1.0 - result_df["Uncertainty"]
+    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
+
     for i, col in enumerate(target_columns):
-        result_df[col] = predictions[:, i]
+        candidate_df[col] = predictions[:, i]
 
-    result_df = result_df.sort_values(by="Utility", ascending=False)
-    result_df["Selected for Testing"] = False
-    if not result_df.empty:
-        result_df.iloc[0, result_df.columns.get_loc("Selected for Testing")] = True
-    result_df.reset_index(drop=True, inplace=True)
+    candidate_df["Utility"] = utility_scores if utility_scores is not None else 0
+    candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # Reorder columns for consistency
-    columns_to_front = ["Idx_Sample"] if "Idx_Sample" in result_df.columns else []
-    metrics_columns = ["Utility", "Exploration", "Exploitation", "Novelty", "Uncertainty"]
-    remaining_columns = [col for col in result_df.columns if col not in columns_to_front + metrics_columns + target_columns + ["Selected for Testing"]]
-    new_column_order = columns_to_front + metrics_columns + target_columns + remaining_columns + ["Selected for Testing"]
-    new_column_order = [col for col in new_column_order if col in result_df.columns]
+    X_candidate_np = candidate_inputs.values
+    X_labeled_np = labeled_data[input_columns].values
+    novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
+    candidate_df["Novelty"] = novelty_scores
 
-    result_df = result_df[new_column_order]
+    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1 + curiosity)
+    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
+
+    candidate_df["Selected for Testing"] = False
+    if not candidate_df.empty:
+        max_utility_idx = candidate_df["Utility"].idxmax()
+        candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
+
+    result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     return result_df
