@@ -9,8 +9,7 @@ from sklearn.cluster import KMeans
 import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
-from app.utils import calculate_novelty
-from app.pinn_utils import compute_physics_loss # Assuming this is a typo and not needed
+from app.utils.utils import calculate_novelty
 
 class ProtoNetModel(nn.Module):
     def __init__(self, input_size, output_size, embedding_size=256, num_layers=3, dropout_rate=0.3):
@@ -91,9 +90,9 @@ class ProtoNetModel(nn.Module):
     def _get_input_columns(self):
         return self.scaler_x.feature_names_in_ if self.scaler_x else None
 
-def protonet_train(model, data, input_columns, target_columns, epochs=50, learning_rate=0.001, batch_size=16):
+def protonet_train(model, data, input_columns, target_columns, epochs=50, learning_rate=0.001, num_tasks=5, num_shot=5, num_query=5):
     labeled_data = data.dropna(subset=target_columns).reset_index(drop=True)
-    if len(labeled_data) < 3:
+    if len(labeled_data) < 10:
         st.error("Not enough labeled samples for Prototypical Network training.")
         return model, None, None
 
@@ -109,20 +108,40 @@ def protonet_train(model, data, input_columns, target_columns, epochs=50, learni
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     loss_function = nn.MSELoss()
 
-    progress_bar = st.progress(0)
     for epoch in range(epochs):
-        progress_bar.progress((epoch + 1) / epochs)
         model.train()
-        for i in range(0, len(inputs_tensor), batch_size):
-            batch_inputs = inputs_tensor[i:i+batch_size]
-            batch_targets = targets_tensor[i:i+batch_size]
+        epoch_loss = 0.0
+
+        for task in range(num_tasks):
+            # Sample support and query sets
+            indices = torch.randperm(len(inputs_tensor))
+            support_indices = indices[:num_shot]
+            query_indices = indices[num_shot:num_shot + num_query]
+
+            support_inputs = inputs_tensor[support_indices]
+            support_targets = targets_tensor[support_indices]
+            query_inputs = inputs_tensor[query_indices]
+            query_targets = targets_tensor[query_indices]
+
+            # Compute prototypes
+            support_embeddings = model.encode(support_inputs)
+            prototypes = torch.mean(support_embeddings, dim=0, keepdim=True)
+            prototype_targets = torch.mean(support_targets, dim=0, keepdim=True)
+
+            # Predict query targets
+            query_embeddings = model.encode(query_inputs)
+            distances = torch.cdist(query_embeddings, prototypes)
+            weights = torch.softmax(-distances, dim=1)
+            predicted_targets = torch.matmul(weights, prototype_targets)
+
+            loss = loss_function(predicted_targets, query_targets)
             
             optimizer.zero_grad()
-            predictions = model(batch_inputs)
-            loss = loss_function(predictions, batch_targets)
             loss.backward()
             optimizer.step()
-    
+
+            epoch_loss += loss.item()
+
     model.is_trained = True
     model.scaler_x = scaler_x
     model.scaler_y = scaler_y
@@ -132,7 +151,7 @@ def protonet_train(model, data, input_columns, target_columns, epochs=50, learni
 
 def evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     labeled_data = data.dropna(subset=target_columns)
-    candidate_df = data[data[target_columns[0]].isnull()].copy()
+    candidate_df = data[data[target_columns][0].isnull()].copy()
 
     if candidate_df.empty:
         st.warning("No candidate samples to evaluate.")

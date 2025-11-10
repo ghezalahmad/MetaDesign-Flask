@@ -9,7 +9,7 @@ import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.pinn_utils import compute_physics_loss
-from app.utils import calculate_novelty
+from app.utils.utils import calculate_novelty
 
 class PINNModel(nn.Module):
     def __init__(self, input_size, output_size, hidden_size=128, num_layers=3, dropout_rate=0.3):
@@ -107,7 +107,7 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
 
 def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     labeled_data = data.dropna(subset=target_columns)
-    candidate_df = data[data[target_columns[0]].isnull()].copy()
+    candidate_df = data[data[target_columns][0].isnull()].copy()
 
     if candidate_df.empty:
         st.warning("No candidate samples to evaluate.")
