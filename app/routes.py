@@ -156,10 +156,53 @@ def run_experiment():
             'labels': results_df.index.tolist()
         }
 
+    parallel_coordinates_data = None
+    if not results_df.empty:
+        dimensions = []
+        for col in input_columns + target_columns:
+            dimensions.append({
+                'label': col,
+                'values': results_df[col].tolist()
+            })
+        if 'Uncertainty' in results_df.columns:
+            dimensions.append({
+                'label': 'Uncertainty',
+                'values': results_df['Uncertainty'].tolist()
+            })
+
+        parallel_coordinates_data = {
+            'type': 'parcoords',
+            'line': {
+                'color': 'blue'
+            },
+            'dimensions': dimensions
+        }
+
+    correlation_heatmap_data = None
+    if not data.empty:
+        corr = data.corr()
+        correlation_heatmap_data = {
+            'z': corr.values.tolist(),
+            'x': corr.columns.tolist(),
+            'y': corr.index.tolist()
+        }
+
+    prediction_error_data = None
+    if not results_df.empty and 'predictions' in results_df.columns and not data.empty:
+        labeled_data = data.dropna(subset=target_columns)
+        if not labeled_data.empty and len(labeled_data) == len(results_df):
+            prediction_error_data = {
+                'actual': labeled_data[target_columns[0]].tolist(),
+                'predicted': results_df['predictions'].tolist()
+            }
+
     return jsonify({
         'success': True,
         'results_table': results_df.to_html(classes='table table-striped', index=False),
         'tsne_data': tsne_data,
-        'scatter_data': scatter_data
+        'scatter_data': scatter_data,
+        'parallel_coordinates_data': parallel_coordinates_data,
+        'correlation_heatmap_data': correlation_heatmap_data,
+        'prediction_error_data': prediction_error_data
     })
 
