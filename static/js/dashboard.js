@@ -203,42 +203,34 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        if (data.parallel_coordinates_data) {
-            Plotly.newPlot('parallel-coordinates-plot', [data.parallel_coordinates_data], {
-                title: 'Parallel Coordinates Plot'
-            });
-        }
+        const additionalPlotContainer = document.getElementById('additional-plot-container');
+        const plotRadios = document.querySelectorAll('input[name="plot-select"]');
 
-        if (data.correlation_heatmap_data) {
-            Plotly.newPlot('correlation-heatmap', [{
-                z: data.correlation_heatmap_data.z,
-                x: data.correlation_heatmap_data.x,
-                y: data.correlation_heatmap_data.y,
-                type: 'heatmap',
-                colorscale: 'Viridis'
-            }], {
-                title: 'Correlation Heatmap'
-            });
-        }
+        plotRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                additionalPlotContainer.innerHTML = '';
+                if (this.checked) {
+                    const plotDiv = document.createElement('div');
+                    plotDiv.id = `${this.value}-plot`;
+                    additionalPlotContainer.appendChild(plotDiv);
 
-        if (data.prediction_error_data) {
-            Plotly.newPlot('prediction-error-plot', [{
-                x: data.prediction_error_data.actual,
-                y: data.prediction_error_data.predicted,
-                mode: 'markers',
-                type: 'scatter',
-                name: 'Predictions'
-            }, {
-                x: [Math.min(...data.prediction_error_data.actual), Math.max(...data.prediction_error_data.actual)],
-                y: [Math.min(...data.prediction_error_data.actual), Math.max(...data.prediction_error_data.actual)],
-                mode: 'lines',
-                type: 'scatter',
-                name: 'Ideal'
-            }], {
-                title: 'Prediction Error',
-                xaxis: { title: 'Actual Values' },
-                yaxis: { title: 'Predicted Values' }
+                    if (this.value === 'parallel-coordinates' && data.parallel_coordinates_data) {
+                        Plotly.newPlot(plotDiv, [data.parallel_coordinates_data], {
+                            title: 'Parallel Coordinates Plot'
+                        });
+                    } else if (this.value === 'correlation-heatmap' && data.correlation_heatmap_data) {
+                        Plotly.newPlot(plotDiv, [{
+                            z: data.correlation_heatmap_data.z,
+                            x: data.correlation_heatmap_data.x,
+                            y: data.correlation_heatmap_data.y,
+                            type: 'heatmap',
+                            colorscale: 'Viridis'
+                        }], {
+                            title: 'Correlation Heatmap'
+                        });
+                    }
+                }
             });
-        }
+        });
     }
 });
