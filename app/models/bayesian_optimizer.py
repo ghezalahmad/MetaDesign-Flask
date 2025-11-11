@@ -5,7 +5,7 @@ from scipy.optimize import minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel, WhiteKernel
 import streamlit as st
-from app.utils import enforce_diversity, calculate_novelty
+from app.utils.utils import calculate_novelty, enforce_diversity
 
 # Module-level helper functions for acquisition calculations
 def _calculate_ucb(mu, sigma, kappa_adjusted):

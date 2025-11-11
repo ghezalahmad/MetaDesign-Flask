@@ -17,7 +17,7 @@ class TestBayesianOptimizer(unittest.TestCase):
         optimizer = BayesianOptimizer(bounds=self.bounds)
         optimizer.fit(self.X_train, self.y_train)
         X_test = np.array([[0.5, 0.5]])
-        mu, sigma, _ = optimizer._get_surrogate_prediction(X_test)
+        mu, sigma = optimizer._get_surrogate_prediction(X_test)
         self.assertEqual(mu.shape, (1,))
         self.assertEqual(sigma.shape, (1,))
 
