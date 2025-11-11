@@ -9,7 +9,8 @@ from scipy.stats import norm
 import pandas as pd
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, RBF, WhiteKernel
-from app.utils.utils import calculate_utility, calculate_novelty, select_acquisition_function
+from app.utils.utils import calculate_novelty
+from app.models.bayesian_optimizer import BayesianOptimizer
 
 class MAMLModel(nn.Module):
     def __init__(self, input_size, output_size, hidden_size=128, num_layers=3, dropout_rate=0.3):
@@ -645,31 +646,18 @@ def evaluate_maml(meta_model: MAMLModel, data: pd.DataFrame, input_columns: list
     X_labeled_scaled = scaler_inputs.transform(labeled_data[input_columns])
     novelty_scores = calculate_novelty(inputs_infer, X_labeled_scaled)
 
-    if acquisition is None:
-        acquisition = select_acquisition_function(curiosity, len(labeled_data))
-    print(f"Using SLAMD-style acquisition function: {acquisition}")
+    # Initialize Bayesian Optimizer
+    optimizer = BayesianOptimizer(surrogate_model=meta_model)
+    optimizer.fit(labeled_data[input_columns], labeled_data[target_columns].values)
 
-    weights = np.clip(np.array(weights) + np.random.uniform(0.01, 0.1, size=len(weights)), 0.1, 1.0)
-    if max_or_min is None or not isinstance(max_or_min, list):
-        max_or_min = ['max'] * len(target_columns)
-
-    # Using the consolidated calculate_utility from app.utils
-    # thresholds parameter can be passed as None if not used here.
-    # for_visualization is False as these are final utility scores for ranking.
-    utility_scores = calculate_utility(
-        predictions=(predictions if not use_fallback else all_predictions),
-        uncertainties=uncertainty_scores,
-        novelty=novelty_scores,
-        curiosity=curiosity,
-        weights=weights,
-        max_or_min=max_or_min,
-        thresholds=None,  # Or pass actual thresholds if they become available here
-        acquisition=acquisition,
-        for_visualization=False
+    # Calculate acquisition scores
+    utility_scores = optimizer.acquisition_function(
+        unlabeled_data[input_columns].values,
+        acquisition="UCB",
+        curiosity=curiosity
     )
-    # The calculate_utility function already applies log1p and clipping internally.
 
-    result_df["Utility"] = utility_scores.flatten()
+    result_df["Utility"] = utility_scores
     result_df["Uncertainty"] = np.clip(uncertainty_scores.flatten(), 1e-6, None) # Ensure uncertainty_scores is flattened
     result_df["Novelty"] = novelty_scores.flatten()
     result_df["Exploration"] = result_df["Uncertainty"] * result_df["Novelty"]

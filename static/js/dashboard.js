@@ -202,5 +202,43 @@ document.addEventListener('DOMContentLoaded', function() {
                 yaxis: { title: 'Uncertainty' }
             });
         }
+
+        if (data.parallel_coordinates_data) {
+            Plotly.newPlot('parallel-coordinates-plot', [data.parallel_coordinates_data], {
+                title: 'Parallel Coordinates Plot'
+            });
+        }
+
+        if (data.correlation_heatmap_data) {
+            Plotly.newPlot('correlation-heatmap', [{
+                z: data.correlation_heatmap_data.z,
+                x: data.correlation_heatmap_data.x,
+                y: data.correlation_heatmap_data.y,
+                type: 'heatmap',
+                colorscale: 'Viridis'
+            }], {
+                title: 'Correlation Heatmap'
+            });
+        }
+
+        if (data.prediction_error_data) {
+            Plotly.newPlot('prediction-error-plot', [{
+                x: data.prediction_error_data.actual,
+                y: data.prediction_error_data.predicted,
+                mode: 'markers',
+                type: 'scatter',
+                name: 'Predictions'
+            }, {
+                x: [Math.min(...data.prediction_error_data.actual), Math.max(...data.prediction_error_data.actual)],
+                y: [Math.min(...data.prediction_error_data.actual), Math.max(...data.prediction_error_data.actual)],
+                mode: 'lines',
+                type: 'scatter',
+                name: 'Ideal'
+            }], {
+                title: 'Prediction Error',
+                xaxis: { title: 'Actual Values' },
+                yaxis: { title: 'Predicted Values' }
+            });
+        }
     }
 });
