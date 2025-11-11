@@ -151,7 +151,12 @@ def protonet_train(model, data, input_columns, target_columns, epochs=50, learni
 
 def evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     labeled_data = data.dropna(subset=target_columns)
-    candidate_df = data[data[target_columns][0].isnull()].copy()
+
+    # --- FIXED: identify unlabeled (candidate) samples properly ---
+    if isinstance(target_columns, list) and len(target_columns) > 0:
+        candidate_df = data[data[target_columns[0]].isnull()].copy()
+    else:
+        candidate_df = data[data[target_columns].isnull()].copy()
 
     if candidate_df.empty:
         st.warning("No candidate samples to evaluate.")
