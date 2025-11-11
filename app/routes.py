@@ -152,7 +152,7 @@ def run_experiment():
     if not results_df.empty and len(target_columns) > 0:
         scatter_data = {
             'x': results_df[target_columns[0]].tolist(),
-            'y': results_df['uncertainty'].tolist() if 'uncertainty' in results_df else [],
+            'y': results_df['Uncertainty'].tolist() if 'Uncertainty' in results_df else [],
             'labels': results_df.index.tolist()
         }
 

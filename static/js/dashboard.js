@@ -172,11 +172,11 @@ document.addEventListener('DOMContentLoaded', function() {
     targetPropertiesContainer.insertAdjacentElement('beforebegin', addTargetButton);
 
     function displayResults(data) {
-        const resultsCard = document.getElementById('results-card');
+        const resultsSection = document.getElementById('results-section');
         const resultsTableContainer = document.getElementById('results-table-container');
 
         resultsTableContainer.innerHTML = data.results_table;
-        resultsCard.style.display = 'block';
+        resultsSection.style.display = 'block';
 
         if (data.tsne_data) {
             Plotly.newPlot('tsne-plot', [{
