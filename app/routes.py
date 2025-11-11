@@ -180,12 +180,18 @@ def run_experiment():
 
     correlation_heatmap_data = None
     if not data.empty:
-        corr = data.corr()
-        correlation_heatmap_data = {
-            'z': corr.values.tolist(),
-            'x': corr.columns.tolist(),
-            'y': corr.index.tolist()
-        }
+        # Compute correlation only on numeric columns
+        numeric_data = data.select_dtypes(include=[np.number])
+        if not numeric_data.empty:
+            corr = numeric_data.corr()
+            correlation_heatmap_data = {
+                'z': corr.values.tolist(),
+                'x': corr.columns.tolist(),
+                'y': corr.index.tolist()
+            }
+        else:
+            correlation_heatmap_data = None
+
 
     prediction_error_data = None
     if not results_df.empty and 'predictions' in results_df.columns and not data.empty:
