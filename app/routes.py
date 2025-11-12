@@ -22,6 +22,10 @@ main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/')
 def index():
+    return render_template('index.html')
+
+@main_bp.route('/dashboard')
+def dashboard():
     return render_template('dashboard.html')
 
 @main_bp.route("/scenario", methods=["GET", "POST"])
@@ -150,7 +154,7 @@ def generate_design_space():
 
     if data.get('action') == 'open':
         session['filepath'] = filepath
-        return redirect(url_for('main.index', ds=filename))
+        return redirect(url_for('main.dashboard', ds=filename))
 
     return redirect(url_for('main.design_space'))
 
