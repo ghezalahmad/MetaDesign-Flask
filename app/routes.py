@@ -281,17 +281,35 @@ def run_experiment():
     if not data[input_columns].empty:
         tsne = TSNE(n_components=2, random_state=42)
         tsne_results = tsne.fit_transform(data[input_columns])
+
+        categories = []
+        if 'category' in data.columns:
+            categories = data['category'].tolist()
+        else:
+            categories = ['unlabeled'] * len(data)
+
         tsne_data = {
-            'x': tsne_results[:, 0].tolist(),
-            'y': tsne_results[:, 1].tolist(),
+            'points': [
+                {'x': float(tsne_results[i, 0]), 'y': float(tsne_results[i, 1]), 'category': categories[i]}
+                for i in range(len(tsne_results))
+            ],
+            'categories': list(set(categories))
         }
 
     scatter_data = None
     if not results_df.empty and len(target_columns) > 0:
+        categories = []
+        if 'category' in results_df.columns:
+            categories = results_df['category'].tolist()
+        else:
+            categories = ['unlabeled'] * len(results_df)
+
         scatter_data = {
-            'x': results_df[target_columns[0]].tolist(),
-            'y': results_df['Uncertainty'].tolist() if 'Uncertainty' in results_df else [],
-            'labels': results_df.index.tolist()
+            'points': [
+                {'x': float(results_df[target_columns[0]][i]), 'y': float(results_df['Uncertainty'][i]) if 'Uncertainty' in results_df else 0, 'category': categories[i]}
+                for i in range(len(results_df))
+            ],
+            'categories': list(set(categories))
         }
 
     parallel_coordinates_data = None
