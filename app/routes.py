@@ -1,6 +1,6 @@
 import logging
 import logging
-from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
+from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for, send_from_directory
 import os
 from werkzeug.utils import secure_filename
 import pandas as pd
@@ -78,6 +78,7 @@ def generate_design_space():
     material_name = data.get('material_name')
     feature_names = data.getlist('feature_name')
     feature_types = data.getlist('feature_type')
+    target_names = data.getlist('target_name')
 
     feature_definitions = []
     total_combinations = 1
@@ -114,6 +115,9 @@ def generate_design_space():
     df = pd.DataFrame(list(product_iter), columns=feature_names)
     df.insert(0, 'Idx_Sample', range(1, len(df) + 1))
 
+    for target in target_names:
+        df[target] = np.nan
+
     # Save to CSV
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"designspace_{secure_filename(material_name)}_{timestamp}.csv"
@@ -122,7 +126,7 @@ def generate_design_space():
 
     if data.get('action') == 'open':
         session['filepath'] = filepath
-        return redirect(url_for('main.index', ds=filepath))
+        return redirect(url_for('main.index', ds=filename))
 
     return redirect(url_for('main.design_space'))
 
@@ -131,17 +135,36 @@ def generate_feature_values(feature):
         return np.arange(feature['min'], feature['max'] + feature['step'], feature['step'])
     return feature['values']
 
+@main_bp.route('/download-design-space/<filename>')
+def download_design_space(filename):
+    design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+    return send_from_directory(design_space_dir, filename, as_attachment=True)
+
+@main_bp.route('/delete-design-space/<filename>', methods=['DELETE'])
+def delete_design_space(filename):
+    try:
+        design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+        filepath = os.path.join(design_space_dir, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'File not found'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @main_bp.route('/set-filepath-from-url', methods=['POST'])
 def set_filepath_from_url():
-    filepath = request.args.get('path')
-    if filepath and os.path.exists(filepath):
-        session['filepath'] = filepath
-        try:
-            data = pd.read_csv(filepath)
-            filename = os.path.basename(filepath)
-            return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)})
+    filename = request.args.get('filename')
+    if filename:
+        design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+        filepath = os.path.join(design_space_dir, filename)
+        if os.path.exists(filepath):
+            session['filepath'] = filepath
+            try:
+                data = pd.read_csv(filepath)
+                return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+            except Exception as e:
+                return jsonify({'success': False, 'error': str(e)})
     return jsonify({'success': False, 'error': 'File not found.'})
 
 @main_bp.route('/upload', methods=['POST'])
