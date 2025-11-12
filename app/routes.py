@@ -1,31 +1,22 @@
 import logging
-logging.debug("Importing flask")
-from flask import Blueprint, render_template, request, jsonify, session
-logging.debug("Importing os")
+import logging
+from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
 import os
-logging.debug("Importing secure_filename")
 from werkzeug.utils import secure_filename
-logging.debug("Importing pandas")
 import pandas as pd
-logging.debug("Importing MAMLModel")
 from app.models.models import MAMLModel, evaluate_maml
-logging.debug("Importing ReptileModel")
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
-logging.debug("Importing ProtoNetModel")
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
-logging.debug("Importing RFModel")
 from app.models.rf_model import RFModel, train_rf_model, evaluate_rf_model
-logging.debug("Importing PINNModel")
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
-logging.debug("Importing LolopyRFModel")
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
-logging.debug("Importing weighted_uncertainty_ensemble")
 from app.models.ensemble import weighted_uncertainty_ensemble
-logging.debug("Importing numpy")
 import numpy as np
-logging.debug("Importing TSNE")
 from sklearn.manifold import TSNE
-logging.debug("Finished imports")
+import itertools
+from datetime import datetime
+
+logging.basicConfig(level=logging.DEBUG)
 
 main_bp = Blueprint('main', __name__)
 
@@ -33,41 +24,89 @@ main_bp = Blueprint('main', __name__)
 def index():
     return render_template('dashboard.html')
 
-@main_bp.route("/scenario", methods=["GET", "POST"])
-def scenario():
-    scenario_file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "scenarios.csv")
+@main_bp.route('/design-space')
+def design_space():
+    design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+    history = []
+    if os.path.exists(design_space_dir):
+        for filename in sorted(os.listdir(design_space_dir), reverse=True):
+            if filename.endswith('.csv'):
+                filepath = os.path.join(design_space_dir, filename)
+                history.append({'name': filename, 'path': filepath})
 
-    # Initialize default data if file doesn’t exist
-    default_data = [
-        ["Scenario 1", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
-        ["Scenario 2", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
-        ["Scenario 3", 10800, 240, 8.0, 16, 675, 2, 12, 4, 120, 4.8],
-        ["Scenario 4", 10200, 240, 8.0, 24, 425, 2, 16, 8, 120, 7.3],
-        ["Scenario 5 (Selected Scenario)", 10200, 224, 7.5, 34, 300, 8, 6, 4, 28, 10.3],
-        ["Scenario ALL SAMPLES", 165000, 120, 4.0, 330, 500, 1, 330, 0, 120, 100.0]
-    ]
+    return render_template('design_space.html', history=history)
 
-    columns = [
-        "Scenario", "Total Cost (EUR)", "Total Duration (days)", "Total Duration (months)",
-        "Total Recipes Tested", "Cost per Recipe (EUR)", "No. of cycles",
-        "No. of initial recipes", "No. of recipes per cycle",
-        "Duration per Cycle (days)", "Coverage of material space (%)"
-    ]
+@main_bp.route('/generate-design-space', methods=['POST'])
+def generate_design_space():
+    data = request.form
+    material_name = data.get('material_name')
+    feature_names = data.getlist('feature_name')
+    feature_types = data.getlist('feature_type')
 
-    # Load existing or default scenarios
-    if os.path.exists(scenario_file):
-        data = pd.read_csv(scenario_file)
-    else:
-        data = pd.DataFrame(default_data, columns=columns)
-        data.to_csv(scenario_file, index=False)
+    feature_definitions = []
+    total_combinations = 1
+    for i in range(len(feature_names)):
+        feature = {'name': feature_names[i], 'type': feature_types[i]}
+        if feature['type'] == 'continuous':
+            try:
+                min_val = float(data.getlist('min')[i])
+                max_val = float(data.getlist('max')[i])
+                step_val = float(data.getlist('step')[i])
+                if min_val > max_val or step_val <= 0:
+                    return "Invalid range or step for continuous feature.", 400
+                feature['min'] = min_val
+                feature['max'] = max_val
+                feature['step'] = step_val
+                total_combinations *= ( (max_val - min_val) // step_val) + 1
+            except (ValueError, IndexError):
+                return "Invalid input for continuous feature.", 400
+        else:
+            values = [v.strip() for v in data.getlist('values')[i].split(',')]
+            if not values:
+                 return "Empty values for discrete/categorical feature.", 400
+            feature['values'] = values
+            total_combinations *= len(values)
+        feature_definitions.append(feature)
 
-    # Handle form submissions (updates or new scenario)
-    if request.method == "POST":
-        updated_data = request.get_json()
-        pd.DataFrame(updated_data, columns=columns).to_csv(scenario_file, index=False)
-        return jsonify({"success": True, "message": "Scenarios updated successfully."})
+    if total_combinations > 100000 and 'confirm' not in data:
+        return "Dataset is too large. Please confirm to proceed.", 400
 
-    return render_template("scenario.html", data=data.to_dict(orient="records"), columns=columns)
+    design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+
+    # Generate Cartesian product
+    product_iter = itertools.product(*[generate_feature_values(f) for f in feature_definitions])
+    df = pd.DataFrame(list(product_iter), columns=feature_names)
+    df.insert(0, 'Idx_Sample', range(1, len(df) + 1))
+
+    # Save to CSV
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"designspace_{secure_filename(material_name)}_{timestamp}.csv"
+    filepath = os.path.join(design_space_dir, filename)
+    df.to_csv(filepath, index=False)
+
+    if data.get('action') == 'open':
+        session['filepath'] = filepath
+        return redirect(url_for('main.index', ds=filepath))
+
+    return redirect(url_for('main.design_space'))
+
+def generate_feature_values(feature):
+    if feature['type'] == 'continuous':
+        return np.arange(feature['min'], feature['max'] + feature['step'], feature['step'])
+    return feature['values']
+
+@main_bp.route('/set-filepath-from-url', methods=['POST'])
+def set_filepath_from_url():
+    filepath = request.args.get('path')
+    if filepath and os.path.exists(filepath):
+        session['filepath'] = filepath
+        try:
+            data = pd.read_csv(filepath)
+            filename = os.path.basename(filepath)
+            return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': False, 'error': 'File not found.'})
 
 @main_bp.route('/upload', methods=['POST'])
 def upload_data():

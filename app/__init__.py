@@ -9,6 +9,12 @@ def create_app():
     static_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'static')
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
     app.config['SECRET_KEY'] = 'super-secret-key'
+
+    # Create data directories if they don't exist
+    data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
+    designspaces_dir = os.path.join(data_dir, 'designspaces')
+    os.makedirs(designspaces_dir, exist_ok=True)
+
     logging.debug("Flask app object created")
 
     with app.app_context():
