@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="container-fluid mt-4">
     <div class="card">
         <div class="card-body">
             <h5 class="card-title">CSV File Upload</h5>
@@ -36,6 +37,7 @@
                 </div>
                 <div class="col-md-4">
                     <h5 class="card-title">Target Properties</h5>
+                    <button id="add-target-property-button" class="btn btn-secondary mb-3">Add Target Property</button>
                     <div id="target-properties-container"></div>
                 </div>
                 <div class="col-md-4">
@@ -62,12 +64,12 @@
                 <div class="col-md-6">
                     <label for="model-select" class="form-label">Select Model *</label>
                     <select class="form-select" id="model-select">
-                        <option value="pinn">Physic-informed Neural Networks</option>
                         <option value="lolopy">lolo Random Forest (AI model)</option>
                         <option value="maml">MAML</option>
                         <option value="reptile">Reptile</option>
                         <option value="protonet">ProtoNet</option>
                         <option value="rf">Random Forest</option>
+                        <option value="pinn">PINN</option>
                         <option value="ensemble">Ensemble</option>
                     </select>
                 </div>
@@ -138,6 +140,7 @@
             </div>
         </div>
     </div>
+</div>
 {% endblock %}
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

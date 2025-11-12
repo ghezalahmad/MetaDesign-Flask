@@ -189,11 +189,8 @@ document.addEventListener('DOMContentLoaded', function() {
         newTargetGroup.querySelector('select[name="target_columns"]').addEventListener('change', updateCascadingSelectors);
     }
 
-    const addTargetButton = document.createElement('button');
-    addTargetButton.textContent = 'Add Target Property';
-    addTargetButton.classList.add('btn', 'btn-secondary', 'mb-3');
+    const addTargetButton = document.getElementById('add-target-property-button');
     addTargetButton.addEventListener('click', addTargetProperty);
-    targetPropertiesContainer.insertAdjacentElement('beforebegin', addTargetButton);
 
     function displayResults(data) {
         const resultsSection = document.getElementById('results-section');

@@ -86,52 +86,28 @@ def generate_design_space():
 
     feature_definitions = []
     total_combinations = 1
-
-    min_list = data.getlist('min')
-    max_list = data.getlist('max')
-    step_list = data.getlist('step')
-    values_list = data.getlist('values')
-
-    cont_idx = 0  # index for continuous inputs
-    disc_idx = 0  # index for discrete/categorical inputs
-
     for i in range(len(feature_names)):
-        f_type = feature_types[i]
-        feature = {'name': feature_names[i], 'type': f_type}
-
-        if f_type == 'continuous':
+        feature = {'name': feature_names[i], 'type': feature_types[i]}
+        if feature['type'] == 'continuous':
             try:
-                min_val = float(min_list[cont_idx])
-                max_val = float(max_list[cont_idx])
-                step_val = float(step_list[cont_idx])
-                cont_idx += 1
+                min_val = float(data.getlist('min')[i])
+                max_val = float(data.getlist('max')[i])
+                step_val = float(data.getlist('step')[i])
                 if min_val > max_val or step_val <= 0:
-                    return f"Invalid range or step for {feature['name']}.", 400
+                    return "Invalid range or step for continuous feature.", 400
                 feature['min'] = min_val
                 feature['max'] = max_val
                 feature['step'] = step_val
-                total_combinations *= int((max_val - min_val) / step_val) + 1
+                total_combinations *= ( (max_val - min_val) // step_val) + 1
             except (ValueError, IndexError):
-                return f"Invalid input for {feature['name']} (continuous).", 400
-
-        elif f_type in ['discrete', 'categorical']:
-            try:
-                val_str = values_list[disc_idx] if disc_idx < len(values_list) else ""
-                disc_idx += 1
-                values = [v.strip() for v in val_str.split(',') if v.strip()]
-                if not values:
-                    return f"Empty values for {feature['name']}.", 400
-                feature['values'] = values
-                total_combinations *= len(values)
-            except Exception:
-                return f"Invalid input for {feature['name']} (discrete/categorical).", 400
-
+                return "Invalid input for continuous feature.", 400
         else:
-            return f"Unknown feature type: {f_type}", 400
-
+            values = [v.strip() for v in data.getlist('values')[i].split(',')]
+            if not values:
+                 return "Empty values for discrete/categorical feature.", 400
+            feature['values'] = values
+            total_combinations *= len(values)
         feature_definitions.append(feature)
-
-
 
     if total_combinations > 100000 and 'confirm' not in data:
         return "Dataset is too large. Please confirm to proceed.", 400

@@ -100,7 +100,7 @@ def evaluate_rf_model(rf_model: RFModel, data: pd.DataFrame, input_columns: list
                       max_or_min: list[str]):
     if not rf_model.is_trained:
         st.error("Random Forest model is not trained.")
-        return None
+        return pd.DataFrame(columns=input_columns + target_columns + ["Utility", "Uncertainty", "Novelty", "Exploration", "Exploitation", "Selected for Testing"])
 
     labeled_data = data.dropna(subset=target_columns)
     candidate_df = data[data[target_columns[0]].isnull()].copy()
