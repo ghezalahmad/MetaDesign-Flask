@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h3>Design Space Builder</h3>
+    <p class="text-muted">Define features and their ranges to generate a design space CSV.</p>
+
+    <form id="design-space-form" action="/generate-design-space" method="POST">
+        <div class="mb-3">
+            <label for="material-name" class="form-label">Material Name *</label>
+            <input type="text" class="form-control" id="material-name" name="material_name" required>
+        </div>
+
+        <h5>Features</h5>
+        <div id="features-container">
+            <!-- Feature rows will be added here dynamically -->
+        </div>
+
+        <button type="button" id="add-feature-button" class="btn btn-secondary">Add Feature</button>
+        <hr>
+
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <button type="submit" name="action" value="save" class="btn btn-primary">Generate & Save CSV</button>
+                <button type="submit" name="action" value="open" class="btn btn-success">Generate & Open in Material Discovery</button>
+            </div>
+            <div id="row-count-preview" class="text-muted"></div>
+        </div>
+    </form>
+
+    <!-- Modal -->
+    <div class="modal fade" id="confirmationModal" tabindex="-1" aria-labelledby="confirmationModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmationModalLabel">Confirm Large Dataset Generation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    The design space you are about to generate is very large. Are you sure you want to proceed?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" id="confirm-generate-button" class="btn btn-primary">Generate</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Generated Design Spaces</h5>
+            <ul class="list-group" id="design-space-history">
+                {% for item in history %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    {{ item.name }}
+                    <a href="{{ url_for('main.index', ds=item.path) }}" class="btn btn-sm btn-outline-primary">Open in Material Discovery</a>
+                </li>
+                {% else %}
+                <li class="list-group-item">No design spaces generated yet.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+
+<template id="feature-row-template">
+    <div class="row mb-3 feature-row">
+        <div class="col-md-3">
+            <input type="text" class="form-control" name="feature_name" placeholder="Feature Name" required>
+        </div>
+        <div class="col-md-3">
+            <select class="form-select feature-type-select" name="feature_type">
+                <option value="continuous">Continuous Range</option>
+                <option value="discrete">Discrete Set</option>
+                <option value="categorical">Categorical/Binary</option>
+            </select>
+        </div>
+        <div class="col-md-5 feature-values">
+            <!-- Dynamic content based on selection -->
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-danger remove-feature-button">Remove</button>
+        </div>
+    </div>
+</template>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const featuresContainer = document.getElementById('features-container');
+    const addFeatureButton = document.getElementById('add-feature-button');
+    const featureRowTemplate = document.getElementById('feature-row-template');
+    const form = document.getElementById('design-space-form');
+    const rowCountPreview = document.getElementById('row-count-preview');
+    const confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
+    let totalCombinations = 0;
+
+    form.addEventListener('submit', function(e) {
+        updateRowCountPreview(); // Make sure the count is up to date
+        if (totalCombinations > 100000) {
+            e.preventDefault();
+            confirmationModal.show();
+        }
+    });
+
+    document.getElementById('confirm-generate-button').addEventListener('click', function() {
+        const confirmInput = document.createElement('input');
+        confirmInput.type = 'hidden';
+        confirmInput.name = 'confirm';
+        confirmInput.value = 'true';
+        form.appendChild(confirmInput);
+        form.submit();
+    });
+
+    addFeatureButton.addEventListener('click', function() {
+        const newRow = featureRowTemplate.content.cloneNode(true);
+        featuresContainer.appendChild(newRow);
+        updateFeatureValues(featuresContainer.lastElementChild.querySelector('.feature-type-select'));
+    });
+
+    featuresContainer.addEventListener('change', function(e) {
+        if (e.target.classList.contains('feature-type-select')) {
+            updateFeatureValues(e.target);
+        }
+    });
+
+    featuresContainer.addEventListener('click', function(e) {
+        if (e.target.classList.contains('remove-feature-button')) {
+            e.target.closest('.feature-row').remove();
+            updateRowCountPreview();
+        }
+    });
+
+    form.addEventListener('input', updateRowCountPreview);
+
+    function updateFeatureValues(selectElement) {
+        const valuesContainer = selectElement.closest('.feature-row').querySelector('.feature-values');
+        const featureType = selectElement.value;
+        let html = '';
+
+        if (featureType === 'continuous') {
+            html = `
+                <div class="input-group">
+                    <input type="number" class="form-control" name="min" placeholder="Min" required>
+                    <input type="number" class="form-control" name="max" placeholder="Max" required>
+                    <input type="number" class="form-control" name="step" placeholder="Step" step="any" required>
+                </div>
+            `;
+        } else if (featureType === 'discrete' || featureType === 'categorical') {
+            html = `
+                <input type="text" class="form-control" name="values" placeholder="Comma-separated values" required>
+            `;
+        }
+        valuesContainer.innerHTML = html;
+    }
+
+    function updateRowCountPreview() {
+        const featureRows = document.querySelectorAll('.feature-row');
+        totalCombinations = 1;
+        let previewPossible = true;
+
+        featureRows.forEach(row => {
+            const featureType = row.querySelector('.feature-type-select').value;
+            const valuesContainer = row.querySelector('.feature-values');
+
+            if (featureType === 'continuous') {
+                const min = parseFloat(valuesContainer.querySelector('input[name="min"]').value);
+                const max = parseFloat(valuesContainer.querySelector('input[name="max"]').value);
+                const step = parseFloat(valuesContainer.querySelector('input[name="step"]').value);
+                if (!isNaN(min) && !isNaN(max) && !isNaN(step) && step > 0 && min <= max) {
+                    const count = Math.floor((max - min) / step) + 1;
+                    totalCombinations *= count;
+                } else {
+                    previewPossible = false;
+                }
+            } else if (featureType === 'discrete' || featureType === 'categorical') {
+                const values = valuesContainer.querySelector('input[name="values"]').value;
+                if (values) {
+                    const count = values.split(',').length;
+                    totalCombinations *= count;
+                } else {
+                    previewPossible = false;
+                }
+            }
+        });
+
+        if (previewPossible && totalCombinations > 0) {
+            rowCountPreview.textContent = `Total Combinations: ${totalCombinations}`;
+            if (totalCombinations > 100000) {
+                 rowCountPreview.innerHTML += ' <span class="badge bg-warning text-dark">Warning: Large dataset</span>';
+            }
+        } else {
+            rowCountPreview.textContent = '';
+        }
+    }
+});
+</script>
+{% endblock %}

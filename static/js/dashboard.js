@@ -15,6 +15,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let allColumns = [];
 
+    function autoLoadDataset() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const dsPath = urlParams.get('ds');
+        if (dsPath) {
+            // Set the session filepath for the backend
+            fetch(`/set-filepath-from-url?path=${encodeURIComponent(dsPath)}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if(data.success) {
+                    allColumns = data.columns;
+                    updateDatasetTable(data.filename, data.columns);
+                    populateColumnSelectors(data.columns);
+                    const cardTitle = document.querySelector('.card-title');
+                    if(cardTitle) {
+                        cardTitle.insertAdjacentHTML('afterend', `<div class="alert alert-success" role="alert">Loaded dataset: ${data.filename}</div>`);
+                    }
+                } else {
+                     alert('Error auto-loading dataset: ' + data.error);
+                }
+            });
+        }
+    }
+    autoLoadDataset();
+
     uploadButton.addEventListener('click', function() {
         const file = csvUpload.files[0];
         if (!file) {
