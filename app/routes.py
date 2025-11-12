@@ -33,6 +33,42 @@ main_bp = Blueprint('main', __name__)
 def index():
     return render_template('dashboard.html')
 
+@main_bp.route("/scenario", methods=["GET", "POST"])
+def scenario():
+    scenario_file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "scenarios.csv")
+
+    # Initialize default data if file doesn’t exist
+    default_data = [
+        ["Scenario 1", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
+        ["Scenario 2", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
+        ["Scenario 3", 10800, 240, 8.0, 16, 675, 2, 12, 4, 120, 4.8],
+        ["Scenario 4", 10200, 240, 8.0, 24, 425, 2, 16, 8, 120, 7.3],
+        ["Scenario 5 (Selected Scenario)", 10200, 224, 7.5, 34, 300, 8, 6, 4, 28, 10.3],
+        ["Scenario ALL SAMPLES", 165000, 120, 4.0, 330, 500, 1, 330, 0, 120, 100.0]
+    ]
+
+    columns = [
+        "Scenario", "Total Cost (EUR)", "Total Duration (days)", "Total Duration (months)",
+        "Total Recipes Tested", "Cost per Recipe (EUR)", "No. of cycles",
+        "No. of initial recipes", "No. of recipes per cycle",
+        "Duration per Cycle (days)", "Coverage of material space (%)"
+    ]
+
+    # Load existing or default scenarios
+    if os.path.exists(scenario_file):
+        data = pd.read_csv(scenario_file)
+    else:
+        data = pd.DataFrame(default_data, columns=columns)
+        data.to_csv(scenario_file, index=False)
+
+    # Handle form submissions (updates or new scenario)
+    if request.method == "POST":
+        updated_data = request.get_json()
+        pd.DataFrame(updated_data, columns=columns).to_csv(scenario_file, index=False)
+        return jsonify({"success": True, "message": "Scenarios updated successfully."})
+
+    return render_template("scenario.html", data=data.to_dict(orient="records"), columns=columns)
+
 @main_bp.route('/upload', methods=['POST'])
 def upload_data():
     if 'dataset' not in request.files:
