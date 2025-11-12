@@ -16,6 +16,12 @@
         </div>
 
         <button type="button" id="add-feature-button" class="btn btn-secondary">Add Feature</button>
+
+        <h5 class="mt-4">Target Properties</h5>
+        <div id="targets-container">
+            <!-- Target rows will be added here dynamically -->
+        </div>
+        <button type="button" id="add-target-button" class="btn btn-secondary">Add Target</button>
         <hr>
 
         <div class="d-flex justify-content-between align-items-center">
@@ -53,7 +59,11 @@
                 {% for item in history %}
                 <li class="list-group-item d-flex justify-content-between align-items-center">
                     {{ item.name }}
-                    <a href="{{ url_for('main.index', ds=item.path) }}" class="btn btn-sm btn-outline-primary">Open in Material Discovery</a>
+                    <div>
+                        <a href="{{ url_for('main.index', ds=item.name) }}" class="btn btn-sm btn-outline-primary">Open</a>
+                        <a href="{{ url_for('main.download_design_space', filename=item.name) }}" class="btn btn-sm btn-outline-secondary">Download</a>
+                        <button class="btn btn-sm btn-outline-danger delete-btn" data-filename="{{ item.name }}">Delete</button>
+                    </div>
                 </li>
                 {% else %}
                 <li class="list-group-item">No design spaces generated yet.</li>
@@ -84,11 +94,25 @@
     </div>
 </template>
 
+<template id="target-row-template">
+    <div class="row mb-3 target-row">
+        <div class="col-md-3">
+            <input type="text" class="form-control" name="target_name" placeholder="Target Name" required>
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-danger remove-target-button">Remove</button>
+        </div>
+    </div>
+</template>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const featuresContainer = document.getElementById('features-container');
     const addFeatureButton = document.getElementById('add-feature-button');
     const featureRowTemplate = document.getElementById('feature-row-template');
+    const targetsContainer = document.getElementById('targets-container');
+    const addTargetButton = document.getElementById('add-target-button');
+    const targetRowTemplate = document.getElementById('target-row-template');
     const form = document.getElementById('design-space-form');
     const rowCountPreview = document.getElementById('row-count-preview');
     const confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
@@ -131,6 +155,34 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     form.addEventListener('input', updateRowCountPreview);
+
+    addTargetButton.addEventListener('click', function() {
+        const newRow = targetRowTemplate.content.cloneNode(true);
+        targetsContainer.appendChild(newRow);
+    });
+
+    targetsContainer.addEventListener('click', function(e) {
+        if (e.target.classList.contains('remove-target-button')) {
+            e.target.closest('.target-row').remove();
+        }
+    });
+
+    document.getElementById('design-space-history').addEventListener('click', function(e) {
+        if (e.target.classList.contains('delete-btn')) {
+            const filename = e.target.dataset.filename;
+            if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                fetch(`/delete-design-space/${filename}`, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            e.target.closest('li').remove();
+                        } else {
+                            alert('Error deleting file: ' + data.error);
+                        }
+                    });
+            }
+        }
+    });
 
     function updateFeatureValues(selectElement) {
         const valuesContainer = selectElement.closest('.feature-row').querySelector('.feature-values');

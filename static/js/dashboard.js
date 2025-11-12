@@ -17,10 +17,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function autoLoadDataset() {
         const urlParams = new URLSearchParams(window.location.search);
-        const dsPath = urlParams.get('ds');
-        if (dsPath) {
+        const filename = urlParams.get('ds');
+        if (filename) {
             // Set the session filepath for the backend
-            fetch(`/set-filepath-from-url?path=${encodeURIComponent(dsPath)}`, { method: 'POST' })
+            fetch(`/set-filepath-from-url?filename=${encodeURIComponent(filename)}`, { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if(data.success) {
