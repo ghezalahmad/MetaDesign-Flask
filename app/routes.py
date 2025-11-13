@@ -280,7 +280,7 @@ def run_experiment():
     plot_df = results_df.copy().reset_index().rename(columns={"index": "Row number"})
     plot_df["Utility"] = plot_df.get("Utility", np.random.rand(len(plot_df)))
     plot_df["is_train_data"] = False
-    tsne_plot_json = PlotGenerator.create_tsne_input_space_plot(plot_df)
+    tsne_plot_json = PlotGenerator.create_tsne_input_space_plot(plot_df, input_columns)
     target_scatter_json = PlotGenerator.create_target_scatter_plot(plot_df)
 
     return jsonify({

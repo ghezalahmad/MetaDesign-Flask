@@ -14,29 +14,35 @@ class PlotGenerator:
 
     @classmethod
     def create_target_scatter_plot(cls, plot_df):
-        dimensions = [col for col in plot_df.columns if not col.startswith(UNCERTAINTY_COLUMN_PREFIX)]
-        dimensions.remove('Utility')
-        dimensions.remove('Row number')
+        target_columns = [
+            col for col in plot_df.columns
+            if not col.startswith("Uncertainty (")
+            and col not in ["Row number", "Utility", "is_train_data"]
+            and plot_df[col].dtype != object
+        ]
 
-        if len(dimensions) == 1:
+        if not target_columns:
+            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+
+        if len(target_columns) == 1:
             # Generate a simple scatter plot if there is only one target property.
             # We include the Utility color-coded for aesthetic reasons.
             fig = go.Figure()
             scatter_plot = cls._create_scatter_plot(
-                x=plot_df[dimensions[0]],
+                x=plot_df[target_columns[0]],
                 y=plot_df['Utility'],
                 color=plot_df['Utility'],
                 customdata=plot_df['Row number'],
-                error_x=cls._select_error_col_if_available(plot_df, dimensions[0])
+                error_x=cls._select_error_col_if_available(plot_df, target_columns[0])
             )
             fig.add_trace(scatter_plot)
             fig.update_layout(title='Scatter plot of target properties')
-            fig.update_xaxes(title_text=dimensions[0])
+            fig.update_xaxes(title_text=target_columns[0])
             fig.update_yaxes(title_text='Utility')
         else:
             # General case
             # For n target properties and a priori information columns, we need a (n-1) x (n-1) matrix
-            matrix_size = len(dimensions) - 1
+            matrix_size = len(target_columns) - 1
             fig = make_subplots(rows=matrix_size, cols=matrix_size, start_cell='top-left',
                                 horizontal_spacing=0.01, vertical_spacing=0.01,
                                 shared_xaxes=True, shared_yaxes=True)
@@ -51,8 +57,8 @@ class PlotGenerator:
             col_indices += 1
 
             for (row, col) in zip(row_indices, col_indices):
-                column_name = dimensions[col - 1]
-                row_name = dimensions[row]
+                column_name = target_columns[col - 1]
+                row_name = target_columns[row]
                 scatter_plot = cls._create_scatter_plot(
                     x=plot_df[column_name],
                     y=plot_df[row_name],
@@ -80,15 +86,20 @@ class PlotGenerator:
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     @classmethod
-    def create_tsne_input_space_plot(cls, plot_df):
+    def create_tsne_input_space_plot(cls, plot_df, input_columns):
         if plot_df.empty:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+
+        features_df = plot_df[input_columns].dropna()
+        if features_df.empty:
+            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+
         # The perplexity must be less than the number of data points (the length of the dataframe).
         # Handle this edge case by picking the smallest of the two.
-        tsne = TSNE(n_components=2, verbose=1, perplexity=min(20, len(plot_df) - 1),
+        tsne = TSNE(n_components=2, verbose=1, perplexity=min(20, len(features_df) - 1),
                     n_iter=350, random_state=42, init='pca', learning_rate=100)
         # Exclude the columns that do not belong to the features
-        tsne_result = tsne.fit_transform(plot_df.drop(columns=['Row number', 'Utility', 'is_train_data']))
+        tsne_result = tsne.fit_transform(features_df)
 
         tsne_result_df = pd.DataFrame(
             {'Row number': plot_df['Row number'],
