@@ -6,176 +6,200 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.manifold import TSNE
+from plotly.utils import PlotlyJSONEncoder
 
-UNCERTAINTY_COLUMN_PREFIX = 'Uncertainty ('
+UNCERTAINTY_COLUMN_PREFIX = "Uncertainty ("
 
 
 class PlotGenerator:
+    """Generate t-SNE and scatter plots for SLAMD-style visualization."""
+    PlotlyJSONEncoder = PlotlyJSONEncoder
+
+    # ---------- PUBLIC API ----------
 
     @classmethod
-    def create_target_scatter_plot(cls, plot_df):
-        target_columns = [
-            col for col in plot_df.columns
-            if not col.startswith("Uncertainty (")
-            and col not in ["Row number", "Utility", "is_train_data"]
-            and plot_df[col].dtype != object
-        ]
+    def create_target_scatter_plot(cls, plot_df: pd.DataFrame, target_columns):
+        """Build SLAMD-style scatter or scatter-matrix plots for selected target columns."""
+        if plot_df is None or plot_df.empty:
+            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
+        target_columns = [
+            c for c in target_columns
+            if c in plot_df.columns and pd.api.types.is_numeric_dtype(plot_df[c])
+        ]
         if not target_columns:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
+        # --- One target: simple scatter Utility vs target ---
         if len(target_columns) == 1:
-            # Generate a simple scatter plot if there is only one target property.
-            # We include the Utility color-coded for aesthetic reasons.
+            target = target_columns[0]
             fig = go.Figure()
-            scatter_plot = cls._create_scatter_plot(
-                x=plot_df[target_columns[0]],
-                y=plot_df['Utility'],
-                color=plot_df['Utility'],
-                customdata=plot_df['Row number'],
-                error_x=cls._select_error_col_if_available(plot_df, target_columns[0])
-            )
-            fig.add_trace(scatter_plot)
-            fig.update_layout(title='Scatter plot of target properties')
-            fig.update_xaxes(title_text=target_columns[0])
-            fig.update_yaxes(title_text='Utility')
+            fig.add_trace(cls._create_scatter_trace(
+                x=plot_df[target],
+                y=plot_df["Utility"],
+                color=plot_df["Utility"],
+                customdata=plot_df.get("Row number"),
+                error_x=cls._uncert_col(plot_df, target)
+            ))
+            fig.update_xaxes(title_text=target)
+            fig.update_yaxes(title_text="Utility")
+            fig.update_layout(title="Scatter Plot of Target Properties")
+
+        # --- Multi-target scatter matrix ---
         else:
-            # General case
-            # For n target properties and a priori information columns, we need a (n-1) x (n-1) matrix
-            matrix_size = len(target_columns) - 1
-            fig = make_subplots(rows=matrix_size, cols=matrix_size, start_cell='top-left',
-                                horizontal_spacing=0.01, vertical_spacing=0.01,
-                                shared_xaxes=True, shared_yaxes=True)
-            # Add title and remove the legend on the right that would show 'trace0', 'trace1', ...
-            fig.update_layout(title='Scatter matrix of target properties', showlegend=False)
+            n = len(target_columns)
+            fig = make_subplots(
+                rows=n-1, cols=n-1, start_cell="top-left",
+                horizontal_spacing=0.02, vertical_spacing=0.02,
+                shared_xaxes=True, shared_yaxes=True
+            )
+            fig.update_layout(title="Scatter Matrix of Target Properties", showlegend=False)
 
-            # Generate possible indices for the lower-triangle of the (n-1) x (n-1) matrix
-            row_indices, col_indices = np.tril_indices(n=matrix_size, k=0)
-            # Increment all indices by one (numpy array operator overload)
-            # because the first cell in the subplots is (1, 1)
-            row_indices += 1
-            col_indices += 1
+            row_idx, col_idx = np.tril_indices(n=n-1, k=0)
+            row_idx += 1
+            col_idx += 1
 
-            for (row, col) in zip(row_indices, col_indices):
-                column_name = target_columns[col - 1]
-                row_name = target_columns[row]
-                scatter_plot = cls._create_scatter_plot(
-                    x=plot_df[column_name],
-                    y=plot_df[row_name],
-                    color=plot_df['Utility'],
-                    customdata=plot_df['Row number'],
-                    error_x=cls._select_error_col_if_available(plot_df, column_name),
-                    error_y=cls._select_error_col_if_available(plot_df, row_name),
+            for r, c in zip(row_idx, col_idx):
+                xcol = target_columns[c - 1]
+                ycol = target_columns[r]
+
+                fig.add_trace(
+                    cls._create_scatter_trace(
+                        x=plot_df[xcol],
+                        y=plot_df[ycol],
+                        color=plot_df["Utility"],
+                        customdata=plot_df.get("Row number"),
+                        error_x=cls._uncert_col(plot_df, xcol),
+                        error_y=cls._uncert_col(plot_df, ycol)
+                    ),
+                    row=r, col=c
                 )
-                if row == matrix_size:
-                    # If on the bottom edge of the matrix
-                    fig.update_xaxes(title_text=column_name, row=row, col=col)
-                if col == 1:
-                    # If on the left edge of the matrix
-                    fig.update_yaxes(title_text=row_name, row=row, col=col)
-                # Add subplot at given position
-                fig.add_trace(scatter_plot, row=row, col=col)
+                if r == (n - 1):
+                    fig.update_xaxes(title_text=xcol, row=r, col=c)
+                if c == 1:
+                    fig.update_yaxes(title_text=ycol, row=r, col=c)
 
-        fig.update_layout(
-            height=1000,
-            plot_bgcolor="#0a0e27",
-            paper_bgcolor="#0a0e27",
-            font=dict(color="white"),
-            title_font=dict(color="white")
-        )
+        cls._apply_light_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     @classmethod
-    def create_tsne_input_space_plot(cls, plot_df, input_columns):
-        if plot_df.empty:
+    def create_tsne_input_space_plot(cls, plot_df: pd.DataFrame, input_columns):
+        """Build SLAMD-style t-SNE plot using numeric input columns."""
+        if plot_df is None or plot_df.empty:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
-        features_df = plot_df[input_columns].dropna()
-        if features_df.empty:
+        valid_inputs = [c for c in input_columns if c in plot_df.columns]
+        if not valid_inputs:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
-        # The perplexity must be less than the number of data points (the length of the dataframe).
-        # Handle this edge case by picking the smallest of the two.
-        tsne = TSNE(n_components=2, verbose=1, perplexity=min(20, len(features_df) - 1),
-                    n_iter=350, random_state=42, init='pca', learning_rate=100)
-        # Exclude the columns that do not belong to the features
-        tsne_result = tsne.fit_transform(features_df)
+        features = plot_df[valid_inputs].apply(pd.to_numeric, errors="coerce").dropna(axis=0, how="any")
+        if features.empty or features.shape[1] < 1:
+            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
-        tsne_result_df = pd.DataFrame(
-            {'Row number': plot_df['Row number'],
-             't-SNE-1': tsne_result[:, 0],
-             't-SNE-2': tsne_result[:, 1],
-             'Utility': plot_df['Utility'],
-             'is_train_data': plot_df['is_train_data']}
+        idx = features.index
+        perplexity = max(5, min(20, len(features) - 1))
+        tsne = TSNE(
+            n_components=2, verbose=1, perplexity=perplexity,
+            max_iter=350, random_state=42, init="pca", learning_rate=100
         )
-        fig = px.scatter(tsne_result_df, x='t-SNE-1', y='t-SNE-2', color='Utility', symbol='is_train_data',
-                         custom_data=['Row number'],
-                         title='Materials data in t-SNE coordinates: train data and targets',
-                         symbol_sequence=['circle', 'cross'], render_mode="svg")
+        ts = tsne.fit_transform(features.values)
+
+        tsne_df = pd.DataFrame({
+            "t-SNE-1": ts[:, 0],
+            "t-SNE-2": ts[:, 1],
+            "Utility": plot_df.loc[idx, "Utility"].values
+        }, index=idx)
+
+        tsne_df["is_train_data"] = plot_df.loc[idx, "is_train_data"].values if "is_train_data" in plot_df.columns else False
+        if "Row number" in plot_df.columns:
+            tsne_df["Row number"] = plot_df.loc[idx, "Row number"].values
+
+        fig = px.scatter(
+            tsne_df, x="t-SNE-1", y="t-SNE-2",
+            color="Utility", symbol="is_train_data",
+            color_continuous_scale="Turbo",  # ✅ bright color map
+            custom_data=["Row number"] if "Row number" in tsne_df.columns else None,
+            title="t-SNE Visualization of Material Space",
+            symbol_sequence=["circle", "cross"], render_mode="svg"
+        )
+
         fig.update_traces(
-            hovertemplate='Row number: %{customdata}, Utility: %{marker.color:.2f}',
-            marker=dict(size=7)
-        )
-        fig.update_layout(
-            height=1000,
-            legend_title_text='',
-            legend=dict(
-                yanchor='top',
-                y=0.99,
-                xanchor='left',
-                x=0.01
-            ),
-            plot_bgcolor="#0a0e27",
-            paper_bgcolor="#0a0e27",
-            font=dict(color="white"),
-            title_font=dict(color="white")
+            marker=dict(size=9, line=dict(width=0.6, color="black")),  # ✅ black outline visible on light
+            hovertemplate=(
+                "Row number: %{customdata}<br>Utility: %{marker.color:.2f}"
+                if "Row number" in tsne_df.columns
+                else "Utility: %{marker.color:.2f}"
+            )
         )
 
+        fig.update_layout(
+            legend_title_text="",
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+            height=900
+        )
+
+        cls._apply_light_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
-    @classmethod
-    def _create_scatter_plot(cls, x=None, y=None, color=None, customdata=None, error_x=None, error_y=None):
+    # ---------- INTERNAL HELPERS ----------
+
+    @staticmethod
+    def _apply_light_layout(fig):
+        """Bright layout — visible on all backgrounds."""
+        fig.update_layout(
+            plot_bgcolor="#f7f7f7",
+            paper_bgcolor="#f7f7f7",
+            font=dict(color="black"),
+            title_font=dict(color="black"),
+            xaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
+            yaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
+            legend=dict(
+                bgcolor="rgba(255,255,255,0.6)",
+                font=dict(color="black"),
+                bordercolor="#ccc",
+                borderwidth=0
+            ),
+            margin=dict(l=60, r=40, t=80, b=60)
+        )
+
+    @staticmethod
+    def _uncert_col(df: pd.DataFrame, colname: str):
+        """Return uncertainty array for a column if present, else None."""
+        key = f"{UNCERTAINTY_COLUMN_PREFIX}{colname})"
+        return df[key] if key in df.columns else None
+
+    @staticmethod
+    def _create_scatter_trace(x=None, y=None, color=None, customdata=None, error_x=None, error_y=None):
+        """Create bright scatter trace for high visibility."""
         return go.Scatter(
             x=x,
             y=y,
-            mode='markers',
-            # Manually configure marker size and legend and use the default colorscale for px
+            mode="markers",
             marker=dict(
-                size=7,
-                color=color,
+                size=9,
+                color=color if color is not None else "royalblue",
+                colorscale="Turbo",  # ✅ bright color scale
+                showscale=True,
                 colorbar=dict(
-                    title='Utility'
+                    title=dict(text="Utility", font=dict(color="black")),
+                    tickfont=dict(color="black")
                 ),
-                colorscale='Plasma'
+                line=dict(width=0.6, color="black")  # ✅ black outline for visibility
             ),
             customdata=customdata,
-            # Add light gray error bars for both dimensions
-            error_x=dict(
-                type='data',
-                array=error_x,
-                color='lightgray',
-                thickness=1,
+            error_x=dict(type="data", array=error_x, color="gray", thickness=1) if error_x is not None else None,
+            error_y=dict(type="data", array=error_y, color="gray", thickness=1) if error_y is not None else None,
+            hoverlabel=dict(bgcolor="white", font=dict(color="black")),
+            hovertemplate=(
+                "Row number: %{customdata}<br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Utility: %{marker.color:.2f}"
+                if customdata is not None
+                else "X: %{x:.2f}<br>Y: %{y:.2f}<br>Utility: %{marker.color:.2f}"
             ),
-            error_y=dict(
-                type='data',
-                array=error_y,
-                color='lightgray',
-                thickness=1,
-            ),
-            # Format tooltips for all cases rounding the displayed values to two decimal places.
-            hovertemplate='Row number: %{customdata}, X: %{x:.2f}, Y: %{y:.2f}, Utility: %{marker.color:.2f}',
-            # Make hover label have a black background
-            hoverlabel=dict(bgcolor='black'),
-            # Remove default name 'trace0', 'trace1', ...
-            name=''
+            name=""
         )
 
     @classmethod
     def _select_error_col_if_available(cls, plot_df, column_name=None):
-        """
-        Returns the error column corresponding to the string given.
-        If the error column is not found, the function returns None.
-        Assumes the error columns contain uncertainties of the form (-std, +std).
-        """
-        error_column = plot_df.get(f'{UNCERTAINTY_COLUMN_PREFIX}{column_name})')
+        """Return the uncertainty column if available, else None."""
+        error_column = plot_df.get(f"{UNCERTAINTY_COLUMN_PREFIX}{column_name})")
         return error_column if error_column is not None else None

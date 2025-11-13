@@ -9,36 +9,39 @@ document.addEventListener('DOMContentLoaded', function() {
     const curiositySlider = document.getElementById('curiosity-slider');
     const curiosityValue = document.getElementById('curiosity-value');
     const runExperimentButton = document.getElementById('run-experiment-button');
-    const resultsTable = document.createElement('div');
     const tsnePlot = document.getElementById('tsne-plot');
     const scatterPlot = document.getElementById('scatter-plot');
 
     let allColumns = [];
 
+    // --- Auto-load dataset from URL if provided ---
     function autoLoadDataset() {
         const urlParams = new URLSearchParams(window.location.search);
         const filename = urlParams.get('ds');
         if (filename) {
-            // Set the session filepath for the backend
             fetch(`/set-filepath-from-url?filename=${encodeURIComponent(filename)}`, { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if(data.success) {
-                    allColumns = data.columns;
-                    updateDatasetTable(data.filename, data.columns);
-                    populateColumnSelectors(data.columns);
-                    const cardTitle = document.querySelector('.card-title');
-                    if(cardTitle) {
-                        cardTitle.insertAdjacentHTML('afterend', `<div class="alert alert-success" role="alert">Loaded dataset: ${data.filename}</div>`);
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        allColumns = data.columns;
+                        updateDatasetTable(data.filename, data.columns);
+                        populateColumnSelectors(data.columns);
+                        const cardTitle = document.querySelector('.card-title');
+                        if (cardTitle) {
+                            cardTitle.insertAdjacentHTML(
+                                'afterend',
+                                `<div class="alert alert-success" role="alert">Loaded dataset: ${data.filename}</div>`
+                            );
+                        }
+                    } else {
+                        alert('Error auto-loading dataset: ' + data.error);
                     }
-                } else {
-                     alert('Error auto-loading dataset: ' + data.error);
-                }
-            });
+                });
         }
     }
     autoLoadDataset();
 
+    // --- Upload dataset ---
     uploadButton.addEventListener('click', function() {
         const file = csvUpload.files[0];
         if (!file) {
@@ -65,10 +68,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // --- Update curiosity label ---
     curiositySlider.addEventListener('input', function() {
         curiosityValue.textContent = this.value;
     });
 
+    // --- Run experiment ---
     runExperimentButton.addEventListener('click', function() {
         const selectedInputColumns = Array.from(inputColumns.selectedOptions).map(opt => opt.value);
         const selectedTargetColumns = getTargetColumnConfig();
@@ -102,6 +107,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // --- Dataset table ---
     function updateDatasetTable(filename, columns) {
         const newRow = document.createElement('tr');
         newRow.innerHTML = `
@@ -112,24 +118,34 @@ document.addEventListener('DOMContentLoaded', function() {
         datasetTableBody.appendChild(newRow);
     }
 
+    // --- Populate initial selectors (input + apriori only) ---
     function populateColumnSelectors(columns) {
-        // Initial population
         updateOptions(inputColumns, columns, []);
-        updateOptions(targetColumns, columns, []);
         updateOptions(aprioriColumns, columns, []);
     }
 
+    // --- Handle cascading selector updates ---
     function updateCascadingSelectors() {
         const selectedInputs = Array.from(inputColumns.selectedOptions).map(opt => opt.value);
-        const selectedTargets = Array.from(targetColumns.selectedOptions).map(opt => opt.value);
 
-        const availableForTargets = allColumns.filter(col => !selectedInputs.includes(col));
-        updateOptions(targetColumns, availableForTargets, selectedTargets);
+        // Collect selected targets from all dynamic target groups
+        const selectedTargets = Array.from(
+            document.querySelectorAll('select[name="target_columns"]')
+        ).map(sel => sel.value);
 
-        const availableForApriori = allColumns.filter(col => !selectedInputs.includes(col) && !selectedTargets.includes(col));
-        updateOptions(aprioriColumns, availableForApriori, Array.from(aprioriColumns.selectedOptions).map(opt => opt.value));
+        // Filter available columns for apriori
+        const availableForApriori = allColumns.filter(
+            col => !selectedInputs.includes(col) && !selectedTargets.includes(col)
+        );
+
+        updateOptions(
+            aprioriColumns,
+            availableForApriori,
+            Array.from(aprioriColumns.selectedOptions).map(opt => opt.value)
+        );
     }
 
+    // --- Update options in a <select> element ---
     function updateOptions(selectElement, options, selectedValues) {
         selectElement.innerHTML = '';
         options.forEach(col => {
@@ -145,6 +161,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     inputColumns.addEventListener('change', updateCascadingSelectors);
 
+    // --- Collect dynamic target configuration ---
     function getTargetColumnConfig() {
         const config = [];
         const targetGroups = document.querySelectorAll('.target-group');
@@ -152,7 +169,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const select = group.querySelector('select[name="target_columns"]');
             const weight = group.querySelector('input[name="weights"]');
             const optimization = group.querySelector('select[name="max_or_min"]');
-            if (select.value) {
+            if (select && select.value) {
                 config.push({
                     name: select.value,
                     weight: parseFloat(weight.value),
@@ -163,11 +180,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return config;
     }
 
+    // --- Add a new target property group dynamically ---
     function addTargetProperty() {
-        const index = targetPropertiesContainer.children.length;
         const newTargetGroup = document.createElement('div');
         newTargetGroup.classList.add('mb-3', 'target-group');
-        const availableColumns = allColumns.filter(col => !Array.from(inputColumns.selectedOptions).map(opt => opt.value).includes(col));
+        const availableColumns = allColumns.filter(
+            col => !Array.from(inputColumns.selectedOptions).map(opt => opt.value).includes(col)
+        );
 
         let options = '';
         availableColumns.forEach(col => {
@@ -186,28 +205,79 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
         targetPropertiesContainer.appendChild(newTargetGroup);
-        newTargetGroup.querySelector('select[name="target_columns"]').addEventListener('change', updateCascadingSelectors);
+
+        newTargetGroup
+            .querySelector('select[name="target_columns"]')
+            .addEventListener('change', updateCascadingSelectors);
     }
 
     const addTargetButton = document.getElementById('add-target-property-button');
     addTargetButton.addEventListener('click', addTargetProperty);
 
+    // --- Display experiment results and plots ---
     function displayResults(data) {
+        // keep reference for optional plots
+        window.experimentData = data;
+
+        console.log("✅ Experiment data received:", data);
+
         const resultsSection = document.getElementById('results-section');
         const resultsTableContainer = document.getElementById('results-table-container');
-
         resultsTableContainer.innerHTML = data.results_table;
         resultsSection.style.display = 'block';
 
-        if (data.tsne_plot_json) {
-            const tsneFig = JSON.parse(data.tsne_plot_json);
-            Plotly.newPlot('tsne-plot', tsneFig.data, tsneFig.layout);
-        }
-        if (data.target_scatter_json) {
-            const scatterFig = JSON.parse(data.target_scatter_json);
-            Plotly.newPlot('scatter-plot', scatterFig.data, scatterFig.layout);
+        // --- t-SNE plot ---
+        try {
+            const tsneFig = typeof data.tsne_figure === "string"
+                ? JSON.parse(data.tsne_figure)
+                : data.tsne_figure;
+            console.log("🧩 t-SNE figure:", tsneFig);
+
+            if (tsneFig && tsneFig.data && tsneFig.data.length) {
+                // force layout so points are visible
+                tsneFig.layout = tsneFig.layout || {};
+                tsneFig.layout.width = 600;
+                tsneFig.layout.height = 400;
+                tsneFig.layout.autosize = true;
+                tsneFig.layout.margin = { t: 30, l: 30, r: 30, b: 30 };
+
+                Plotly.newPlot('tsne-plot', tsneFig.data, tsneFig.layout);
+            } else {
+                document.getElementById('tsne-plot').innerHTML =
+                    "<div class='alert alert-warning'>t-SNE JSON empty.</div>";
+            }
+        } catch (err) {
+            console.error("t-SNE plot error:", err);
         }
 
+        // --- Scatter plot ---
+        try {
+            const scatterFig = typeof data.target_scatter_figure === "string"
+                ? JSON.parse(data.target_scatter_figure)
+                : data.target_scatter_figure;
+            console.log("🧩 Scatter figure:", scatterFig);
+
+            if (scatterFig && scatterFig.data && scatterFig.data.length) {
+                scatterFig.layout = scatterFig.layout || {};
+                scatterFig.layout.width = 600;
+                scatterFig.layout.height = 400;
+                scatterFig.layout.autosize = true;
+                scatterFig.layout.margin = { t: 30, l: 30, r: 30, b: 30 };
+
+                Plotly.newPlot('scatter-plot', scatterFig.data, scatterFig.layout);
+            } else {
+                document.getElementById('scatter-plot').innerHTML =
+                    "<div class='alert alert-warning'>Scatter JSON empty.</div>";
+            }
+        } catch (err) {
+            console.error("Scatter plot error:", err);
+        }
+    }
+
+
+
+        // --- Optional additional plots ---
+            // --- Optional additional plots ---
         const additionalPlotContainer = document.getElementById('additional-plot-container');
         const plotRadios = document.querySelectorAll('input[name="plot-select"]');
 
@@ -219,23 +289,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     plotDiv.id = `${this.value}-plot`;
                     additionalPlotContainer.appendChild(plotDiv);
 
-                    if (this.value === 'parallel-coordinates' && data.parallel_coordinates_data) {
-                        Plotly.newPlot(plotDiv, [data.parallel_coordinates_data], {
-                            title: 'Parallel Coordinates Plot'
-                        });
-                    } else if (this.value === 'correlation-heatmap' && data.correlation_heatmap_data) {
-                        Plotly.newPlot(plotDiv, [{
-                            z: data.correlation_heatmap_data.z,
-                            x: data.correlation_heatmap_data.x,
-                            y: data.correlation_heatmap_data.y,
-                            type: 'heatmap',
-                            colorscale: 'Viridis'
-                        }], {
-                            title: 'Correlation Heatmap'
-                        });
+                    // We'll handle optional plots only if returned by backend
+                    if (window.experimentData) {
+                        const data = window.experimentData;
+                        if (this.value === 'parallel-coordinates' && data.parallel_coordinates_data) {
+                            Plotly.newPlot(plotDiv, [data.parallel_coordinates_data], {
+                                title: 'Parallel Coordinates Plot'
+                            });
+                        } else if (this.value === 'correlation-heatmap' && data.correlation_heatmap_data) {
+                            Plotly.newPlot(plotDiv, [{
+                                z: data.correlation_heatmap_data.z,
+                                x: data.correlation_heatmap_data.x,
+                                y: data.correlation_heatmap_data.y,
+                                type: 'heatmap',
+                                colorscale: 'Viridis'
+                            }], {
+                                title: 'Correlation Heatmap'
+                            });
+                        }
                     }
                 }
             });
         });
-    }
-});
+    });
+

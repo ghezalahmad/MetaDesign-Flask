@@ -143,5 +143,9 @@
 </div>
 {% endblock %}
 {% block scripts %}
+    <!-- Load the latest Plotly.js (v2.27.0) -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <!-- Then load your dashboard logic -->
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
