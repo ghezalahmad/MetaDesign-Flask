@@ -199,29 +199,13 @@ document.addEventListener('DOMContentLoaded', function() {
         resultsTableContainer.innerHTML = data.results_table;
         resultsSection.style.display = 'block';
 
-        if (data.tsne_data) {
-            Plotly.newPlot('tsne-plot', [{
-                x: data.tsne_data.x,
-                y: data.tsne_data.y,
-                mode: 'markers',
-                type: 'scatter'
-            }], {
-                title: 't-SNE Visualization'
-            });
+        if (data.tsne_plot_json) {
+            const tsneFig = JSON.parse(data.tsne_plot_json);
+            Plotly.newPlot('tsne-plot', tsneFig.data, tsneFig.layout);
         }
-
-        if (data.scatter_data) {
-            Plotly.newPlot('scatter-plot', [{
-                x: data.scatter_data.x,
-                y: data.scatter_data.y,
-                text: data.scatter_data.labels,
-                mode: 'markers',
-                type: 'scatter'
-            }], {
-                title: 'Scatter Plot',
-                xaxis: { title: 'Target Property' },
-                yaxis: { title: 'Uncertainty' }
-            });
+        if (data.target_scatter_json) {
+            const scatterFig = JSON.parse(data.target_scatter_json);
+            Plotly.newPlot('scatter-plot', scatterFig.data, scatterFig.layout);
         }
 
         const additionalPlotContainer = document.getElementById('additional-plot-container');
