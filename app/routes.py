@@ -13,6 +13,7 @@ from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_
 from app.models.ensemble import weighted_uncertainty_ensemble
 import numpy as np
 from sklearn.manifold import TSNE
+from app.utils.plot_generator import PlotGenerator
 import itertools
 from datetime import datetime
 
@@ -276,95 +277,16 @@ def run_experiment():
     else:
         results_df = pd.DataFrame()
 
-    # Generate visualization data
-    tsne_data = None
-    if not data[input_columns].empty:
-        tsne = TSNE(n_components=2, random_state=42)
-        tsne_results = tsne.fit_transform(data[input_columns])
-
-        categories = []
-        if 'category' in data.columns:
-            categories = data['category'].tolist()
-        else:
-            categories = ['unlabeled'] * len(data)
-
-        tsne_data = {
-            'points': [
-                {'x': float(tsne_results[i, 0]), 'y': float(tsne_results[i, 1]), 'category': categories[i]}
-                for i in range(len(tsne_results))
-            ],
-            'categories': list(set(categories))
-        }
-
-    scatter_data = None
-    if not results_df.empty and len(target_columns) > 0:
-        categories = []
-        if 'category' in results_df.columns:
-            categories = results_df['category'].tolist()
-        else:
-            categories = ['unlabeled'] * len(results_df)
-
-        scatter_data = {
-            'points': [
-                {'x': float(results_df[target_columns[0]][i]), 'y': float(results_df['Uncertainty'][i]) if 'Uncertainty' in results_df else 0, 'category': categories[i]}
-                for i in range(len(results_df))
-            ],
-            'categories': list(set(categories))
-        }
-
-    parallel_coordinates_data = None
-    if not results_df.empty:
-        dimensions = []
-        for col in input_columns + target_columns:
-            dimensions.append({
-                'label': col,
-                'values': results_df[col].tolist()
-            })
-        if 'Uncertainty' in results_df.columns:
-            dimensions.append({
-                'label': 'Uncertainty',
-                'values': results_df['Uncertainty'].tolist()
-            })
-
-        parallel_coordinates_data = {
-            'type': 'parcoords',
-            'line': {
-                'color': 'blue'
-            },
-            'dimensions': dimensions
-        }
-
-    correlation_heatmap_data = None
-    if not data.empty:
-        # Compute correlation only on numeric columns
-        numeric_data = data.select_dtypes(include=[np.number])
-        if not numeric_data.empty:
-            corr = numeric_data.corr()
-            correlation_heatmap_data = {
-                'z': corr.values.tolist(),
-                'x': corr.columns.tolist(),
-                'y': corr.index.tolist()
-            }
-        else:
-            correlation_heatmap_data = None
-
-
-    prediction_error_data = None
-    if not results_df.empty and 'predictions' in results_df.columns and not data.empty:
-        labeled_data = data.dropna(subset=target_columns)
-        if not labeled_data.empty and len(labeled_data) == len(results_df):
-            prediction_error_data = {
-                'actual': labeled_data[target_columns[0]].tolist(),
-                'predicted': results_df['predictions'].tolist()
-            }
+    plot_df = results_df.copy().reset_index().rename(columns={"index": "Row number"})
+    plot_df["Utility"] = plot_df.get("Utility", np.random.rand(len(plot_df)))
+    plot_df["is_train_data"] = False
+    tsne_plot_json = PlotGenerator.create_tsne_input_space_plot(plot_df)
+    target_scatter_json = PlotGenerator.create_target_scatter_plot(plot_df)
 
     return jsonify({
-        'success': True,
-        'results_table': results_df.to_html(classes='table table-striped', index=False),
-        'tsne_data': tsne_data,
-        'scatter_data': scatter_data,
-        'parallel_coordinates_data': parallel_coordinates_data,
-        'correlation_heatmap_data': correlation_heatmap_data,
-        'prediction_error_data': prediction_error_data
+        "success": True,
+        "results_table": results_df.to_html(classes="table table-striped", index=False),
+        "tsne_plot_json": tsne_plot_json,
+        "target_scatter_json": target_scatter_json
     })
 
