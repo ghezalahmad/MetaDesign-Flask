@@ -79,7 +79,7 @@ class PlotGenerator:
                 if c == 1:
                     fig.update_yaxes(title_text=ycol, row=r, col=c)
 
-        cls._apply_light_layout(fig)
+        cls._apply_dark_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     @classmethod
@@ -117,14 +117,14 @@ class PlotGenerator:
         fig = px.scatter(
             tsne_df, x="t-SNE-1", y="t-SNE-2",
             color="Utility", symbol="is_train_data",
-            color_continuous_scale="Turbo",  # ✅ bright color map
+            color_continuous_scale="Turbo",
             custom_data=["Row number"] if "Row number" in tsne_df.columns else None,
             title="t-SNE Visualization of Material Space",
             symbol_sequence=["circle", "cross"], render_mode="svg"
         )
 
         fig.update_traces(
-            marker=dict(size=9, line=dict(width=0.6, color="black")),  # ✅ black outline visible on light
+            marker=dict(size=9, line=dict(width=0.6, color="white")),
             hovertemplate=(
                 "Row number: %{customdata}<br>Utility: %{marker.color:.2f}"
                 if "Row number" in tsne_df.columns
@@ -138,26 +138,26 @@ class PlotGenerator:
             height=900
         )
 
-        cls._apply_light_layout(fig)
+        cls._apply_dark_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     # ---------- INTERNAL HELPERS ----------
 
     @staticmethod
-    def _apply_light_layout(fig):
-        """Bright layout — visible on all backgrounds."""
+    def _apply_dark_layout(fig):
+        """Dark layout for high visibility on dark backgrounds."""
         fig.update_layout(
-            plot_bgcolor="#f7f7f7",
-            paper_bgcolor="#f7f7f7",
-            font=dict(color="black"),
-            title_font=dict(color="black"),
-            xaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
-            yaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
+            plot_bgcolor="#212529",
+            paper_bgcolor="#212529",
+            font=dict(color="white"),
+            title_font=dict(color="white"),
+            xaxis=dict(showgrid=True, gridcolor="#444", zerolinecolor="#555"),
+            yaxis=dict(showgrid=True, gridcolor="#444", zerolinecolor="#555"),
             legend=dict(
-                bgcolor="rgba(255,255,255,0.6)",
-                font=dict(color="black"),
-                bordercolor="#ccc",
-                borderwidth=0
+                bgcolor="rgba(0,0,0,0.5)",
+                font=dict(color="white"),
+                bordercolor="#888",
+                borderwidth=1
             ),
             margin=dict(l=60, r=40, t=80, b=60)
         )
@@ -170,26 +170,26 @@ class PlotGenerator:
 
     @staticmethod
     def _create_scatter_trace(x=None, y=None, color=None, customdata=None, error_x=None, error_y=None):
-        """Create bright scatter trace for high visibility."""
+        """Create a scatter trace compatible with dark themes."""
         return go.Scatter(
             x=x,
             y=y,
             mode="markers",
             marker=dict(
                 size=9,
-                color=color if color is not None else "royalblue",
-                colorscale="Turbo",  # ✅ bright color scale
+                color=color if color is not None else "cyan",
+                colorscale="Turbo",
                 showscale=True,
                 colorbar=dict(
-                    title=dict(text="Utility", font=dict(color="black")),
-                    tickfont=dict(color="black")
+                    title=dict(text="Utility", font=dict(color="white")),
+                    tickfont=dict(color="white")
                 ),
-                line=dict(width=0.6, color="black")  # ✅ black outline for visibility
+                line=dict(width=0.6, color="white")
             ),
             customdata=customdata,
             error_x=dict(type="data", array=error_x, color="gray", thickness=1) if error_x is not None else None,
             error_y=dict(type="data", array=error_y, color="gray", thickness=1) if error_y is not None else None,
-            hoverlabel=dict(bgcolor="white", font=dict(color="black")),
+            hoverlabel=dict(bgcolor="#343a40", font=dict(color="white")),
             hovertemplate=(
                 "Row number: %{customdata}<br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Utility: %{marker.color:.2f}"
                 if customdata is not None
