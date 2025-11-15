@@ -1,4 +1,6 @@
+
 import json
+import logging
 import numpy as np
 import pandas as pd
 import plotly
@@ -23,63 +25,45 @@ class PlotGenerator:
         if plot_df is None or plot_df.empty:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
+        if "Row number" not in plot_df.columns:
+            plot_df['Row number'] = plot_df.index
+
         target_columns = [
             c for c in target_columns
             if c in plot_df.columns and pd.api.types.is_numeric_dtype(plot_df[c])
         ]
         if not target_columns:
+            logging.warning("No valid numeric target columns found in DataFrame for scatter plot.")
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
 
         # --- One target: simple scatter Utility vs target ---
         if len(target_columns) == 1:
             target = target_columns[0]
-            fig = go.Figure()
-            fig.add_trace(cls._create_scatter_trace(
-                x=plot_df[target],
-                y=plot_df["Utility"],
-                color=plot_df["Utility"],
-                customdata=plot_df.get("Row number"),
-                error_x=cls._uncert_col(plot_df, target)
-            ))
-            fig.update_xaxes(title_text=target)
-            fig.update_yaxes(title_text="Utility")
-            fig.update_layout(title="Scatter Plot of Target Properties")
+            fig = px.scatter(
+                plot_df,
+                x=target,
+                y="Utility",
+                color="Utility",
+                symbol="is_train_data",
+                custom_data=["Row number"],
+                color_continuous_scale="Turbo",
+                title="Scatter Plot of Target Properties"
+            )
 
         # --- Multi-target scatter matrix ---
         else:
-            n = len(target_columns)
-            fig = make_subplots(
-                rows=n-1, cols=n-1, start_cell="top-left",
-                horizontal_spacing=0.02, vertical_spacing=0.02,
-                shared_xaxes=True, shared_yaxes=True
+            fig = px.scatter_matrix(
+                plot_df,
+                dimensions=target_columns,
+                color="Utility",
+                symbol="is_train_data",
+                custom_data=["Row number"],
+                color_continuous_scale="Turbo",
+                title="Scatter Matrix of Target Properties"
             )
-            fig.update_layout(title="Scatter Matrix of Target Properties", showlegend=False)
+            fig.update_traces(diagonal_visible=False)
 
-            row_idx, col_idx = np.tril_indices(n=n-1, k=0)
-            row_idx += 1
-            col_idx += 1
-
-            for r, c in zip(row_idx, col_idx):
-                xcol = target_columns[c - 1]
-                ycol = target_columns[r]
-
-                fig.add_trace(
-                    cls._create_scatter_trace(
-                        x=plot_df[xcol],
-                        y=plot_df[ycol],
-                        color=plot_df["Utility"],
-                        customdata=plot_df.get("Row number"),
-                        error_x=cls._uncert_col(plot_df, xcol),
-                        error_y=cls._uncert_col(plot_df, ycol)
-                    ),
-                    row=r, col=c
-                )
-                if r == (n - 1):
-                    fig.update_xaxes(title_text=xcol, row=r, col=c)
-                if c == 1:
-                    fig.update_yaxes(title_text=ycol, row=r, col=c)
-
-        cls._apply_dark_layout(fig)
+        cls._apply_light_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     @classmethod
@@ -87,6 +71,9 @@ class PlotGenerator:
         """Build SLAMD-style t-SNE plot using numeric input columns."""
         if plot_df is None or plot_df.empty:
             return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+
+        if "Row number" not in plot_df.columns:
+            plot_df['Row number'] = plot_df.index
 
         valid_inputs = [c for c in input_columns if c in plot_df.columns]
         if not valid_inputs:
@@ -107,28 +94,25 @@ class PlotGenerator:
         tsne_df = pd.DataFrame({
             "t-SNE-1": ts[:, 0],
             "t-SNE-2": ts[:, 1],
-            "Utility": plot_df.loc[idx, "Utility"].values
+            "Utility": plot_df.loc[idx, "Utility"].values,
+            "Row number": plot_df.loc[idx, "Row number"].values
         }, index=idx)
 
         tsne_df["is_train_data"] = plot_df.loc[idx, "is_train_data"].values if "is_train_data" in plot_df.columns else False
-        if "Row number" in plot_df.columns:
-            tsne_df["Row number"] = plot_df.loc[idx, "Row number"].values
 
         fig = px.scatter(
             tsne_df, x="t-SNE-1", y="t-SNE-2",
-            color="Utility", symbol="is_train_data",
+            color="Utility",
+            symbol="is_train_data",
             color_continuous_scale="Turbo",
-            custom_data=["Row number"] if "Row number" in tsne_df.columns else None,
+            custom_data=["Row number"],
             title="t-SNE Visualization of Material Space",
-            symbol_sequence=["circle", "cross"], render_mode="svg"
         )
 
         fig.update_traces(
-            marker=dict(size=9, line=dict(width=0.6, color="white")),
+            marker=dict(size=9, line=dict(width=0.6, color="black")),
             hovertemplate=(
-                "Row number: %{customdata}<br>Utility: %{marker.color:.2f}"
-                if "Row number" in tsne_df.columns
-                else "Utility: %{marker.color:.2f}"
+                "Row number: %{customdata[0]}<br>Utility: %{marker.color:.2f}"
             )
         )
 
@@ -138,68 +122,26 @@ class PlotGenerator:
             height=900
         )
 
-        cls._apply_dark_layout(fig)
+        cls._apply_light_layout(fig)
         return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
     # ---------- INTERNAL HELPERS ----------
 
     @staticmethod
-    def _apply_dark_layout(fig):
-        """Dark layout for high visibility on dark backgrounds."""
+    def _apply_light_layout(fig):
+        """Bright layout — visible on all backgrounds."""
         fig.update_layout(
-            plot_bgcolor="#212529",
-            paper_bgcolor="#212529",
-            font=dict(color="white"),
-            title_font=dict(color="white"),
-            xaxis=dict(showgrid=True, gridcolor="#444", zerolinecolor="#555"),
-            yaxis=dict(showgrid=True, gridcolor="#444", zerolinecolor="#555"),
+            plot_bgcolor="#f7f7f7",
+            paper_bgcolor="#f7f7f7",
+            font=dict(color="black"),
+            title_font=dict(color="black"),
+            xaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
+            yaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
             legend=dict(
-                bgcolor="rgba(0,0,0,0.5)",
-                font=dict(color="white"),
-                bordercolor="#888",
-                borderwidth=1
+                bgcolor="rgba(255,255,255,0.6)",
+                font=dict(color="black"),
+                bordercolor="#ccc",
+                borderwidth=0
             ),
             margin=dict(l=60, r=40, t=80, b=60)
         )
-
-    @staticmethod
-    def _uncert_col(df: pd.DataFrame, colname: str):
-        """Return uncertainty array for a column if present, else None."""
-        key = f"{UNCERTAINTY_COLUMN_PREFIX}{colname})"
-        return df[key] if key in df.columns else None
-
-    @staticmethod
-    def _create_scatter_trace(x=None, y=None, color=None, customdata=None, error_x=None, error_y=None):
-        """Create a scatter trace compatible with dark themes."""
-        return go.Scatter(
-            x=x,
-            y=y,
-            mode="markers",
-            marker=dict(
-                size=9,
-                color=color if color is not None else "cyan",
-                colorscale="Turbo",
-                showscale=True,
-                colorbar=dict(
-                    title=dict(text="Utility", font=dict(color="white")),
-                    tickfont=dict(color="white")
-                ),
-                line=dict(width=0.6, color="white")
-            ),
-            customdata=customdata,
-            error_x=dict(type="data", array=error_x, color="gray", thickness=1) if error_x is not None else None,
-            error_y=dict(type="data", array=error_y, color="gray", thickness=1) if error_y is not None else None,
-            hoverlabel=dict(bgcolor="#343a40", font=dict(color="white")),
-            hovertemplate=(
-                "Row number: %{customdata}<br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Utility: %{marker.color:.2f}"
-                if customdata is not None
-                else "X: %{x:.2f}<br>Y: %{y:.2f}<br>Utility: %{marker.color:.2f}"
-            ),
-            name=""
-        )
-
-    @classmethod
-    def _select_error_col_if_available(cls, plot_df, column_name=None):
-        """Return the uncertainty column if available, else None."""
-        error_column = plot_df.get(f"{UNCERTAINTY_COLUMN_PREFIX}{column_name})")
-        return error_column if error_column is not None else None

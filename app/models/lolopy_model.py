@@ -2,7 +2,6 @@
 import numpy as np
 import pandas as pd
 from lolopy.learners import RandomForestRegressor
-import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.utils.utils import calculate_novelty
@@ -19,8 +18,6 @@ class LolopyRFModel:
         self.is_trained = False
         self.input_columns = input_columns
         self.target_columns = target_columns
-        # scaler_x is not strictly needed if inputs are always passed as DataFrames
-        # with correct columns, but it's good practice for compatibility.
         self.scaler_x = None
 
     def train(self, X, y):
@@ -50,16 +47,9 @@ class LolopyRFModel:
             self.models.append(model)
 
         self.is_trained = True
-        # A simple placeholder for scaler_x to hold feature names
         if self.input_columns:
             self.scaler_x = type('scaler', (), {'feature_names_in_': self.input_columns})()
 
-
-    def predict(self, X):
-        """Generates predictions from all trained models."""
-        # This is for compatibility with some parts of Streamlit app that might just call predict
-        predictions, _ = self.predict_with_uncertainty(X)
-        return predictions
 
     def predict_with_uncertainty(self, X, input_columns=None, num_samples=None):
         """Generates predictions and uncertainties from all trained models."""
@@ -67,7 +57,6 @@ class LolopyRFModel:
             raise RuntimeError("Model has not been trained yet.")
 
         if isinstance(X, pd.DataFrame):
-            # If a DataFrame is passed, use its columns if they match, or reorder
             if self.input_columns:
                 X = X[self.input_columns]
             X_np = X.values
@@ -88,15 +77,9 @@ class LolopyRFModel:
 
         return final_predictions, final_uncertainties
 
-    def _get_input_columns(self):
-        """Returns the input columns used for training."""
-        return self.input_columns
-
 def train_lolopy_model(data: pd.DataFrame, input_columns: list, target_columns: list, n_estimators: int = 100):
     """Trains a lolopy RandomForestRegressor model."""
     train_df = data.dropna(subset=target_columns)
-    X_train = train_df[input_columns]
-    y_train = train_df[target_columns]
 
     model_wrapper = LolopyRFModel(
         num_trees=n_estimators,
@@ -104,10 +87,16 @@ def train_lolopy_model(data: pd.DataFrame, input_columns: list, target_columns: 
         target_columns=target_columns
     )
 
-    with st.spinner("Training Lolopy Random Forest model..."):
+    if train_df.empty:
+        # Create a dummy model with 8 rows if no training data is available, as lolopy requires at least 8 rows.
+        X_train_dummy = pd.DataFrame(np.zeros((8, len(input_columns))), columns=input_columns)
+        y_train_dummy = pd.DataFrame(np.zeros((8, len(target_columns))), columns=target_columns)
+        model_wrapper.train(X_train_dummy, y_train_dummy)
+    else:
+        X_train = train_df[input_columns]
+        y_train = train_df[target_columns]
         model_wrapper.train(X_train, y_train)
 
-    st.success("Lolopy Random Forest model trained successfully!")
     return model_wrapper, None, None
 
 def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_columns: list,
@@ -120,16 +109,12 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     candidate_df = data[data[target_columns[0]].isnull()].copy()
 
     if candidate_df.empty:
-        st.warning("No candidate samples to evaluate.")
         return pd.DataFrame()
 
     train_inputs = labeled_data[input_columns]
     train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
 
-    st.info("Using Bayesian Optimization with LolopyRF surrogate to score candidates.")
-
-    # The LolopyRFModel instance is now the surrogate_model
     utility_scores = multi_objective_bayesian_optimization(
         train_inputs=train_inputs,
         train_targets=train_targets,
@@ -137,16 +122,14 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
         weights=weights_targets,
         max_or_min=max_or_min_targets,
         curiosity=curiosity,
-        acquisition="UCB", # or other acquisition function as needed
+        acquisition="UCB",
         strategy="weighted_sum",
         surrogate_model=model,
         input_columns=input_columns
     )
 
-    # Get predictions and uncertainties for the result dataframe
     predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
 
-    # Populate the candidate dataframe with results
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]

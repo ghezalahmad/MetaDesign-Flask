@@ -1,3 +1,4 @@
+
 import logging
 import os
 import itertools
@@ -15,7 +16,7 @@ from sklearn.manifold import TSNE
 from app.models.models import MAMLModel, evaluate_maml
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
-from app.models.rf_model import RFModel, train_rf_model, evaluate_rf_model
+from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
 from app.models.ensemble import weighted_uncertainty_ensemble
@@ -40,7 +41,7 @@ def dashboard():
 
 @main_bp.route("/scenario", methods=["GET", "POST"])
 def scenario():
-    scenario_file = os.path.join(os.path.dirname(__file__), "..", "data", "scenarios.csv")
+    scenario_.jsxile = os.path.join(os.path.dirname(__file__), "..", "data", "scenarios.csv")
 
     default_data = [
         ["Scenario 1", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
@@ -176,7 +177,8 @@ def set_filepath_from_url():
             session['filepath'] = filepath
             try:
                 data = pd.read_csv(filepath)
-                return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+                response = {'success': True, 'columns': data.columns.tolist(), 'filename': filename}
+                return jsonify(response)
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
     return jsonify({'success': False, 'error': 'File not found.'})
@@ -205,88 +207,105 @@ def upload_data():
 
 @main_bp.route('/run-experiment', methods=['POST'])
 def run_experiment():
-    filepath = session.get('filepath')
-    if not filepath or not os.path.exists(filepath):
-        return jsonify({'success': False, 'error': 'Please upload a dataset first.'})
+    try:
+        filepath = session.get('filepath')
+        if not filepath or not os.path.exists(filepath):
+            logging.error("Filepath not found in session or file does not exist.")
+            return jsonify({'success': False, 'error': 'Please upload a dataset first.'})
 
-    data = pd.read_csv(filepath)
-    config = request.get_json()
-    model_name = config.get('model')
-    curiosity = float(config.get('curiosity', 0.5))
-    input_columns = config.get('input_columns')
-    target_columns_config = config.get('target_columns')
+        logging.info(f"Loading data from: {filepath}")
+        data = pd.read_csv(filepath)
+        data['Row number'] = data.index
+        logging.info(f"Original data shape: {data.shape}")
 
-    target_columns = [t['name'] for t in target_columns_config]
-    weights = np.array([float(t['weight']) for t in target_columns_config])
-    max_or_min = [t['optimization'] for t in target_columns_config]
+        config = request.get_json()
+        logging.info(f"Received experiment config: {config}")
 
-    # ---- Model Execution ----
-    if model_name == 'maml':
-        model = MAMLModel(input_size=len(input_columns), output_size=len(target_columns))
-        results_df = evaluate_maml(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'reptile':
-        model = ReptileModel(input_size=len(input_columns), output_size=len(target_columns))
-        model, _, _ = reptile_train(model, data, input_columns, target_columns, 50, 0.001, 5, 16)
-        results_df = evaluate_reptile(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'protonet':
-        model = ProtoNetModel(input_size=len(input_columns), output_size=len(target_columns))
-        model, _, _ = protonet_train(model, data, input_columns, target_columns, 50, 0.001, 5, 5, 5)
-        results_df = evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'rf':
-        model, _, _ = train_rf_model(data, input_columns, target_columns)
-        results_df = evaluate_rf_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'pinn':
-        model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
-        model, _, _ = pinn_train(model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
-        results_df = evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'lolopy':
-        model, _, _ = train_lolopy_model(data, input_columns, target_columns)
-        results_df = evaluate_lolopy_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    elif model_name == 'ensemble':
-        pinn_model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
-        pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(pinn_model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
-        rf_model, rf_scaler_x, rf_scaler_y = train_rf_model(data, input_columns, target_columns)
-        models = {'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y), 'rf': (rf_model, rf_scaler_x, rf_scaler_y)}
-        results_df, _ = weighted_uncertainty_ensemble(models, data, input_columns, target_columns, curiosity, weights, max_or_min)
-    else:
-        results_df = pd.DataFrame()
+        model_name = config.get('model')
+        curiosity = float(config.get('curiosity', 0.5))
+        input_columns = config.get('input_columns')
+        target_columns_config = config.get('target_columns')
 
-    # ---- Build Visualization ----
-    tsne_df = data.copy()
-    if "Row number" not in tsne_df.columns:
-        tsne_df["Row number"] = np.arange(1, len(tsne_df) + 1)
-    if "is_train_data" not in tsne_df.columns:
-        tsne_df["is_train_data"] = False
+        target_columns = [t['name'] for t in target_columns_config]
+        weights = np.array([float(t['weight']) for t in target_columns_config])
+        max_or_min = [t['optimization'] for t in target_columns_config]
 
-    if "Utility" in results_df.columns:
-        tsne_df["Utility"] = results_df["Utility"].reindex(tsne_df.index).fillna(0.0)
-    else:
-        tsne_df["Utility"] = 0.0
+        # ---- Model Execution ----
+        if model_name == 'maml':
+            model = MAMLModel(input_size=len(input_columns), output_size=len(target_columns))
+            results_df = evaluate_maml(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'reptile':
+            model = ReptileModel(input_size=len(input_columns), output_size=len(target_columns))
+            model, _, _ = reptile_train(model, data, input_columns, target_columns, 50, 0.001, 5, 16)
+            results_df = evaluate_reptile(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'protonet':
+            model = ProtoNetModel(input_size=len(input_columns), output_size=len(target_columns))
+            model, _, _ = protonet_train(model, data, input_columns, target_columns, 50, 0.001, 5, 5, 5)
+            results_df = evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'rf':
+            model, _, _ = train_rf_model(data, input_columns, target_columns)
+            results_df = evaluate_rf_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'pinn':
+            model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
+            model, _, _ = pinn_train(model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
+            results_df = evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'lolopy':
+            model, _, _ = train_lolopy_model(data, input_columns, target_columns)
+            results_df = evaluate_lolopy_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'ensemble':
+            pinn_model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
+            pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(pinn_model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
+            rf_model, rf_scaler_x, rf_scaler_y = train_rf_model(data, input_columns, target_columns)
+            models = {'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y), 'rf': (rf_model, rf_scaler_x, rf_scaler_y)}
+            results_df, _ = weighted_uncertainty_ensemble(models, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        else:
+            results_df = pd.DataFrame()
 
-    tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_df, input_columns)
+        logging.info(f"Results DataFrame shape after model evaluation: {results_df.shape}")
+        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
+            logging.info(f"Results DataFrame head:\n{results_df.head()}")
 
-    scatter_df = results_df.copy()
-    if "Row number" not in scatter_df.columns:
-        scatter_df = scatter_df.reset_index(drop=False).rename(columns={"index": "Row number"})
-    if "Utility" not in scatter_df.columns:
-        scatter_df["Utility"] = 0.0
-    if "is_train_data" not in scatter_df.columns:
-        scatter_df["is_train_data"] = False
+        # ---- Build Visualization ----
+        # Prepare data for t-SNE plot
+        tsne_df = data.copy()
+        tsne_df["is_train_data"] = ~tsne_df[target_columns].isnull().any(axis=1)
 
-    target_scatter_figure = PlotGenerator.create_target_scatter_plot(scatter_df, target_columns)
+        # Merge results to get Utility scores
+        if "Utility" in results_df.columns:
+            tsne_df = tsne_df.merge(results_df[['Utility']], left_index=True, right_index=True, how='left')
+            tsne_df["Utility"].fillna(0, inplace=True)
+        else:
+            tsne_df["Utility"] = 0.0
 
-    print("🔍 t-SNE dataframe shape:", tsne_df.shape)
-    print("🔍 Numeric columns in tsne_df:", tsne_df.select_dtypes(include=[np.number]).columns.tolist())
-    print("🔍 Utility stats:", tsne_df["Utility"].min(), tsne_df["Utility"].max())
-    print("🔍 Scatter dataframe shape:", results_df.shape)
-    print("🔍 Returned t-SNE JSON length:", len(str(tsne_figure)))
-    print("🔍 Returned Scatter JSON length:", len(str(target_scatter_figure)))
+        logging.info(f"t-SNE DataFrame shape: {tsne_df.shape}")
+        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
+            logging.info(f"t-SNE DataFrame head:\n{tsne_df.head()}")
 
+        tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_df, input_columns)
 
-    # ---- Return to Frontend ----
-    return jsonify({
-        "success": True,
-        "results_table": results_df.to_html(classes="table table-striped", index=False),
-        "tsne_figure": tsne_figure,
-        "target_scatter_figure": target_scatter_figure
-    })
+        # Prepare data for scatter plot
+        scatter_df = results_df.copy()
+        scatter_df["is_train_data"] = False # All results are suggestions
+
+        logging.info(f"Scatter DataFrame shape: {scatter_df.shape}")
+        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
+            logging.info(f"Scatter DataFrame head:\n{scatter_df.head()}")
+
+        target_scatter_figure = PlotGenerator.create_target_scatter_plot(scatter_df, target_columns)
+
+        response_data = {
+            "success": True,
+            "results_table": results_df.to_html(classes="table table-striped", index=False),
+            "tsne_figure": tsne_figure,
+            "target_scatter_figure": target_scatter_figure
+        }
+        logging.info(f"Sending response to frontend. TSNE JSON is empty: {not tsne_figure or tsne_figure == '{}'}. Scatter JSON is empty: {not target_scatter_figure or target_scatter_figure == '{}'}")
+
+        # ---- Return to Frontend ----
+        return jsonify(response_data)
+    except Exception as e:
+        logging.exception("An error occurred in /run-experiment")
+        with open("flask_server.log", "w") as f:
+            import traceback
+            f.write(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500

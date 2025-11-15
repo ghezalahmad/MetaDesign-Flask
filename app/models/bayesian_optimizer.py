@@ -744,8 +744,7 @@ def multi_objective_bayesian_optimization(
              raise ValueError("Provided surrogate_model is not trained.")
 
         all_mu_orig, all_sigma_orig = surrogate_model.predict_with_uncertainty(
-            candidate_inputs_df,
-            input_columns=input_columns
+            candidate_inputs_df
         )
 
         if all_mu_orig.ndim == 1: all_mu_orig = all_mu_orig.reshape(-1, 1)
