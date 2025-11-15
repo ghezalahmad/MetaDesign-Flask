@@ -1,0 +1,17 @@
+Navigating to the page...
+Page loaded. Waiting for column selectors to be populated by JavaScript...
+Column selectors are populated.
+Selected input columns.
+Experiment configured.
+Experiment is running...
+Browser console: Failed to load resource: the server responded with a status of 500 (INTERNAL SERVER ERROR)
+Browser console: Received response from /run-experiment: Response
+Browser console: Received data from /run-experiment: {error: Value of 'custom_data_0' is not the name of a colu…ility', 'is_train_data'] but received: Row number, success: false}
+Browser console: Error running experiment: Value of 'custom_data_0' is not the name of a column in 'data_frame'. Expected one of ['t-SNE-1', 't-SNE-2', 'Utility', 'is_train_data'] but received: Row number
+An error occurred: Locator expected to be visible
+Actual value: hidden
+Call log:
+  - Expect "to_be_visible" with timeout 30000ms
+  - waiting for locator("#results-section")
+    34 × locator resolved to <div id="results-section">…</div>
+       - unexpected value "hidden"

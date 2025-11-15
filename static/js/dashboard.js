@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             );
                         }
                     } else {
-                        alert('Error auto-loading dataset: ' + data.error);
+                        console.error('Error auto-loading dataset: ' + data.error);
                     }
                 });
         }
@@ -97,13 +97,22 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify(experimentConfig)
         })
-        .then(response => response.json())
+        .then(response => {
+            console.log("Received response from /run-experiment:", response);
+            return response.json();
+        })
         .then(data => {
+            console.log("Received data from /run-experiment:", data);
             if (data.success) {
                 displayResults(data);
             } else {
                 alert('Error running experiment: ' + data.error);
+                console.error('Error running experiment:', data.error);
             }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            alert('A network error occurred. Check the console for details.');
         });
     });
 
@@ -231,23 +240,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const tsneFig = typeof data.tsne_figure === "string"
                 ? JSON.parse(data.tsne_figure)
                 : data.tsne_figure;
-            console.log("🧩 t-SNE figure:", tsneFig);
+            console.log("t-SNE Figure JSON:", JSON.stringify(tsneFig, null, 2));
 
             if (tsneFig && tsneFig.data && tsneFig.data.length) {
-                // force layout so points are visible
-                tsneFig.layout = tsneFig.layout || {};
-                tsneFig.layout.width = 600;
-                tsneFig.layout.height = 400;
-                tsneFig.layout.autosize = true;
-                tsneFig.layout.margin = { t: 30, l: 30, r: 30, b: 30 };
-
                 Plotly.newPlot('tsne-plot', tsneFig.data, tsneFig.layout);
             } else {
                 document.getElementById('tsne-plot').innerHTML =
-                    "<div class='alert alert-warning'>t-SNE JSON empty.</div>";
+                    "<div class='alert alert-warning'>t-SNE JSON empty or invalid.</div>";
             }
         } catch (err) {
-            console.error("t-SNE plot error:", err);
+            console.error("Error processing t-SNE plot:", err);
         }
 
         // --- Scatter plot ---
@@ -255,22 +257,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const scatterFig = typeof data.target_scatter_figure === "string"
                 ? JSON.parse(data.target_scatter_figure)
                 : data.target_scatter_figure;
-            console.log("🧩 Scatter figure:", scatterFig);
+            console.log("Scatter Figure JSON:", JSON.stringify(scatterFig, null, 2));
 
             if (scatterFig && scatterFig.data && scatterFig.data.length) {
-                scatterFig.layout = scatterFig.layout || {};
-                scatterFig.layout.width = 600;
-                scatterFig.layout.height = 400;
-                scatterFig.layout.autosize = true;
-                scatterFig.layout.margin = { t: 30, l: 30, r: 30, b: 30 };
-
                 Plotly.newPlot('scatter-plot', scatterFig.data, scatterFig.layout);
             } else {
                 document.getElementById('scatter-plot').innerHTML =
-                    "<div class='alert alert-warning'>Scatter JSON empty.</div>";
+                    "<div class='alert alert-warning'>Scatter JSON empty or invalid.</div>";
             }
         } catch (err) {
-            console.error("Scatter plot error:", err);
+            console.error("Error processing scatter plot:", err);
         }
     }
 
