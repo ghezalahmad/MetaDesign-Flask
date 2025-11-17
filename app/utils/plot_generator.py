@@ -1,147 +1,209 @@
-
-import json
-import logging
-import numpy as np
 import pandas as pd
-import plotly
-import plotly.express as px
+import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from sklearn.manifold import TSNE
-from plotly.utils import PlotlyJSONEncoder
-
-UNCERTAINTY_COLUMN_PREFIX = "Uncertainty ("
 
 
 class PlotGenerator:
-    """Generate t-SNE and scatter plots for SLAMD-style visualization."""
-    PlotlyJSONEncoder = PlotlyJSONEncoder
 
-    # ---------- PUBLIC API ----------
-
+    # ======================================================
+    #   TARGET SCATTER PLOT
+    # ======================================================
     @classmethod
-    def create_target_scatter_plot(cls, plot_df: pd.DataFrame, target_columns):
-        """Build SLAMD-style scatter or scatter-matrix plots for selected target columns."""
-        if plot_df is None or plot_df.empty:
-            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+    def create_target_scatter_plot(cls, df: pd.DataFrame, target_columns):
 
-        if "Row number" not in plot_df.columns:
-            plot_df['Row number'] = plot_df.index
+        if df is None or df.empty:
+            print("⚠ SCATTER: empty dataframe")
+            return {}
 
-        target_columns = [
-            c for c in target_columns
-            if c in plot_df.columns and pd.api.types.is_numeric_dtype(plot_df[c])
-        ]
-        if not target_columns:
-            logging.warning("No valid numeric target columns found in DataFrame for scatter plot.")
-            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+        df = df.copy()
 
-        # --- One target: simple scatter Utility vs target ---
-        if len(target_columns) == 1:
-            target = target_columns[0]
-            fig = px.scatter(
-                plot_df,
-                x=target,
-                y="Utility",
-                color="Utility",
-                symbol="is_train_data",
-                custom_data=["Row number"],
-                color_continuous_scale="Turbo",
-                title="Scatter Plot of Target Properties"
-            )
+        # Row number
+        if "Row number" not in df.columns:
+            df["Row number"] = df.index
 
-        # --- Multi-target scatter matrix ---
+        # Utility must exist
+        if "Utility" not in df.columns:
+            print("⚠ SCATTER: Utility missing → created zeros")
+            df["Utility"] = 0.0
+
+        df["Utility"] = pd.to_numeric(df["Utility"], errors="coerce").fillna(0)
+
+        # Determine x axis
+        if target_columns and target_columns[0] in df.columns:
+            x_col = target_columns[0]
         else:
-            fig = px.scatter_matrix(
-                plot_df,
-                dimensions=target_columns,
-                color="Utility",
-                symbol="is_train_data",
-                custom_data=["Row number"],
-                color_continuous_scale="Turbo",
-                title="Scatter Matrix of Target Properties"
-            )
-            fig.update_traces(diagonal_visible=False)
+            numerics = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c != "Utility"]
+            x_col = numerics[0] if numerics else "Utility"
 
-        cls._apply_light_layout(fig)
-        return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        df[x_col] = pd.to_numeric(df[x_col], errors="coerce").fillna(0)
 
-    @classmethod
-    def create_tsne_input_space_plot(cls, plot_df: pd.DataFrame, input_columns):
-        """Build SLAMD-style t-SNE plot using numeric input columns."""
-        if plot_df is None or plot_df.empty:
-            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+        print("✅ create_target_scatter_plot:", x_col, "vs Utility")
 
-        if "Row number" not in plot_df.columns:
-            plot_df['Row number'] = plot_df.index
+        # Convert to native Python types BEFORE creating figure
+        x_values = df[x_col].astype(float).tolist()
+        y_values = df["Utility"].astype(float).tolist()
+        utility_values = df["Utility"].astype(float).tolist()
+        row_numbers = df["Row number"].astype(int).tolist()
 
-        valid_inputs = [c for c in input_columns if c in plot_df.columns]
-        if not valid_inputs:
-            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
+        # Create figure using graph_objects for better control
+        fig = go.Figure()
 
-        features = plot_df[valid_inputs].apply(pd.to_numeric, errors="coerce").dropna(axis=0, how="any")
-        if features.empty or features.shape[1] < 1:
-            return json.dumps({}, cls=plotly.utils.PlotlyJSONEncoder)
-
-        idx = features.index
-        perplexity = max(5, min(20, len(features) - 1))
-        tsne = TSNE(
-            n_components=2, verbose=1, perplexity=perplexity,
-            max_iter=350, random_state=42, init="pca", learning_rate=100
-        )
-        ts = tsne.fit_transform(features.values)
-
-        tsne_df = pd.DataFrame({
-            "t-SNE-1": ts[:, 0],
-            "t-SNE-2": ts[:, 1],
-            "Utility": plot_df.loc[idx, "Utility"].values,
-            "Row number": plot_df.loc[idx, "Row number"].values
-        }, index=idx)
-
-        tsne_df["is_train_data"] = plot_df.loc[idx, "is_train_data"].values if "is_train_data" in plot_df.columns else False
-
-        fig = px.scatter(
-            tsne_df, x="t-SNE-1", y="t-SNE-2",
-            color="Utility",
-            symbol="is_train_data",
-            color_continuous_scale="Turbo",
-            custom_data=["Row number"],
-            title="t-SNE Visualization of Material Space",
-        )
-
-        fig.update_traces(
-            marker=dict(size=9, line=dict(width=0.6, color="black")),
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color=utility_values,
+                colorscale='Turbo',
+                showscale=True,
+                colorbar=dict(title="Utility"),
+                line=dict(color='black', width=0.5)
+            ),
+            customdata=[[row] for row in row_numbers],
             hovertemplate=(
-                "Row number: %{customdata[0]}<br>Utility: %{marker.color:.2f}"
-            )
-        )
+                "Row: %{customdata[0]}<br>" +
+                f"{x_col}: %{{x:.2f}}<br>" +
+                "Utility: %{y:.2f}<br>" +
+                "<extra></extra>"
+            ),
+            name=''
+        ))
 
         fig.update_layout(
-            legend_title_text="",
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-            height=900
-        )
-
-        cls._apply_light_layout(fig)
-        return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
-
-    # ---------- INTERNAL HELPERS ----------
-
-    @staticmethod
-    def _apply_light_layout(fig):
-        """Bright layout — visible on all backgrounds."""
-        fig.update_layout(
+            title=f"{x_col} vs Utility",
+            xaxis_title=x_col,
+            yaxis_title="Utility",
             plot_bgcolor="#f7f7f7",
             paper_bgcolor="#f7f7f7",
             font=dict(color="black"),
-            title_font=dict(color="black"),
-            xaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
-            yaxis=dict(showgrid=True, gridcolor="#d0d0d0", zerolinecolor="#c0c0c0"),
-            legend=dict(
-                bgcolor="rgba(255,255,255,0.6)",
-                font=dict(color="black"),
-                bordercolor="#ccc",
-                borderwidth=0
-            ),
-            margin=dict(l=60, r=40, t=80, b=60)
+            margin=dict(l=60, r=40, t=60, b=60),
+            xaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            yaxis=dict(showgrid=True, gridcolor="#cccccc"),
         )
+
+        return fig.to_dict()
+
+
+    # ======================================================
+    #   t-SNE PLOT
+    # ======================================================
+    @classmethod
+    def create_tsne_input_space_plot(cls, df: pd.DataFrame, input_columns):
+
+        if df is None or df.empty:
+            print("⚠ TSNE: empty dataframe")
+            return {}
+
+        df = df.copy()
+
+        # Row number
+        if "Row number" not in df.columns:
+            df["Row number"] = df.index
+
+        # Utility
+        if "Utility" not in df.columns:
+            print("⚠ TSNE: Utility missing → created zeros")
+            df["Utility"] = 0.0
+
+        df["Utility"] = pd.to_numeric(df["Utility"], errors="coerce").fillna(0)
+
+        # Numeric input features
+        valid_inputs = [
+            c for c in (input_columns or [])
+            if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+        ]
+
+        if not valid_inputs:
+            valid_inputs = [
+                c for c in df.columns
+                if pd.api.types.is_numeric_dtype(df[c]) and c not in ["Utility"]
+            ]
+
+        if not valid_inputs:
+            print("⚠ TSNE: no numeric inputs found.")
+            return {}
+
+        features = df[valid_inputs].astype(float)
+        n = len(features)
+
+        if n < 3:
+            print("⚠ TSNE: n<3 → cannot compute t-SNE")
+            return {}
+
+        perplexity = max(5, min(30, n - 1))
+        print(f"✅ TSNE: running t-SNE({features.shape}) perplexity={perplexity}")
+
+        tsne = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            max_iter=350,
+            init="pca",
+            random_state=42,
+            learning_rate=80,
+            verbose=1
+        )
+
+        emb = tsne.fit_transform(features.values)
+
+        # Convert to native Python types IMMEDIATELY
+        tsne_x = emb[:, 0].astype(float).tolist()
+        tsne_y = emb[:, 1].astype(float).tolist()
+        utility_values = df["Utility"].astype(float).tolist()
+        row_numbers = df["Row number"].astype(int).tolist()
+
+        print(f"✅ TSNE: Converted {len(tsne_x)} points to Python lists")
+
+        # Create figure using graph_objects for better control
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=tsne_x,
+            y=tsne_y,
+            mode='markers',
+            marker=dict(
+                size=7,
+                color=utility_values,
+                colorscale='Turbo',
+                showscale=True,
+                colorbar=dict(title="Utility"),
+                line=dict(color='black', width=0.5)
+            ),
+            customdata=[[row] for row in row_numbers],
+            hovertemplate=(
+                "Row: %{customdata[0]}<br>" +
+                "t-SNE-1: %{x:.2f}<br>" +
+                "t-SNE-2: %{y:.2f}<br>" +
+                "Utility: %{marker.color:.2f}<br>" +
+                "<extra></extra>"
+            ),
+            name=''
+        ))
+
+        fig.update_layout(
+            title="t-SNE Material Space",
+            xaxis_title="t-SNE-1",
+            yaxis_title="t-SNE-2",
+            plot_bgcolor="#f7f7f7",
+            paper_bgcolor="#f7f7f7",
+            font=dict(color="black"),
+            margin=dict(l=60, r=40, t=60, b=60),
+            xaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            yaxis=dict(showgrid=True, gridcolor="#cccccc"),
+        )
+
+        fig_dict = fig.to_dict()
+
+        # Debug
+        print("DEBUG TSNE: traces =", len(fig_dict['data']))
+        if fig_dict['data'] and len(fig_dict['data']) > 0:
+            trace_len = len(fig_dict['data'][0].get('x', []))
+            print("DEBUG TSNE: points =", trace_len)
+            if trace_len >= 5:
+                print("DEBUG TSNE sample:", fig_dict['data'][0]['x'][:5])
+            else:
+                print("DEBUG TSNE: NOT ENOUGH POINTS IN TRACE!")
+                print("DEBUG TSNE: Full x data:", fig_dict['data'][0].get('x'))
+
+        return fig_dict

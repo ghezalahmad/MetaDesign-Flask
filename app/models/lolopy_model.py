@@ -104,17 +104,23 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
                           max_or_min_targets: list[str]):
     """
     Evaluates candidates using the trained Lolopy model as a surrogate in Bayesian Optimization.
+    Returns a candidate_df with predictions, uncertainties, Utility, Novelty, etc.
+    This version is hardened to ALWAYS provide a numeric 'Utility' column.
     """
+    # 1. Split labeled vs candidate rows
     labeled_data = data.dropna(subset=target_columns)
     candidate_df = data[data[target_columns[0]].isnull()].copy()
 
     if candidate_df.empty:
+        print("⚠ evaluate_lolopy_model: No candidate rows found (all targets labeled).")
         return pd.DataFrame()
 
+    # 2. Train inputs / targets / candidate inputs
     train_inputs = labeled_data[input_columns]
     train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
 
+    # 3. Compute utility via Bayesian optimization
     utility_scores = multi_objective_bayesian_optimization(
         train_inputs=train_inputs,
         train_targets=train_targets,
@@ -128,31 +134,64 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
         input_columns=input_columns
     )
 
+    # 4. Surrogate predictions and uncertainties
     predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
 
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    candidate_df["Utility"] = utility_scores if utility_scores is not None else 0
+    # 5. Utility: ensure existence and numeric type
+    if utility_scores is None:
+        print("⚠ evaluate_lolopy_model: utility_scores is None, setting Utility = 0.0")
+        candidate_df["Utility"] = 0.0
+    else:
+        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
+        if len(utility_scores) != len(candidate_df):
+            print(
+                f"⚠ evaluate_lolopy_model: "
+                f"len(utility_scores)={len(utility_scores)} != len(candidate_df)={len(candidate_df)}. "
+                f"Using min length."
+            )
+            n = min(len(utility_scores), len(candidate_df))
+            candidate_df = candidate_df.iloc[:n].copy()
+            utility_scores = utility_scores[:n]
+
+        candidate_df["Utility"] = utility_scores
+
+    # Make sure Utility is clean
+    candidate_df["Utility"] = (
+        pd.to_numeric(candidate_df["Utility"], errors="coerce")
+        .fillna(0.0)
+        .astype(float)
+    )
+
+    # 6. Uncertainty (aggregate)
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # Calculate Novelty
+    # 7. Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # Simplified Exploration/Exploitation metrics
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1 + curiosity)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1) # Based on predicted value
+    # 8. Simple Exploration / Exploitation metrics
+    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
+    # Exploitation: mean predicted target across selected targets
+    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
 
+    # 9. Select best candidate
     candidate_df["Selected for Testing"] = False
-    if not candidate_df.empty and "Utility" in candidate_df.columns:
-        # Find the row with the maximum utility and set "Selected for Testing" to True
+    if "Utility" in candidate_df.columns and not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
+    else:
+        print("⚠ evaluate_lolopy_model: Utility column is missing or empty when selecting best candidate.")
 
+    # 10. Final sorting
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
+
+    print("✅ evaluate_lolopy_model: result_df shape =", result_df.shape)
+    print("✅ evaluate_lolopy_model: columns =", list(result_df.columns))
 
     return result_df

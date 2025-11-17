@@ -1,311 +1,330 @@
-document.addEventListener('DOMContentLoaded', function() {
-    const csvUpload = document.getElementById('csv-upload');
-    const uploadButton = document.getElementById('upload-button');
-    const datasetTableBody = document.getElementById('dataset-table-body');
-    const inputColumns = document.getElementById('input-columns');
-    const targetPropertiesContainer = document.getElementById('target-properties-container');
-    const aprioriColumns = document.getElementById('apriori-columns');
-    const modelSelect = document.getElementById('model-select');
-    const curiositySlider = document.getElementById('curiosity-slider');
-    const curiosityValue = document.getElementById('curiosity-value');
-    const runExperimentButton = document.getElementById('run-experiment-button');
-    const tsnePlot = document.getElementById('tsne-plot');
-    const scatterPlot = document.getElementById('scatter-plot');
+// ==========================================================
+//  DASHBOARD.JS — CLEAN, STABLE, PRODUCTION VERSION
+// ==========================================================
+
+document.addEventListener("DOMContentLoaded", () => {
+    // ----- DOM ELEMENTS -----
+    const csvUpload = document.getElementById("csv-upload");
+    const uploadButton = document.getElementById("upload-button");
+    const datasetTableBody = document.getElementById("dataset-table-body");
+
+    const inputColumns = document.getElementById("input-columns");
+    const aprioriColumns = document.getElementById("apriori-columns");
+    const targetContainer = document.getElementById("target-properties-container");
+
+    const modelSelect = document.getElementById("model-select");
+    const curiositySlider = document.getElementById("curiosity-slider");
+    const curiosityValue = document.getElementById("curiosity-value");
+
+    const runButton = document.getElementById("run-experiment-button");
+
+    const tsnePlotDiv = document.getElementById("tsne-plot");
+    const scatterPlotDiv = document.getElementById("scatter-plot");
+
+    const resultsSection = document.getElementById("results-section");
+    const resultsTableContainer = document.getElementById("results-table-container");
+
+    const addTargetButton = document.getElementById("add-target-property-button");
 
     let allColumns = [];
+    let experimentData = null;
 
-    // --- Auto-load dataset from URL if provided ---
-    function autoLoadDataset() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const filename = urlParams.get('ds');
-        if (filename) {
-            fetch(`/set-filepath-from-url?filename=${encodeURIComponent(filename)}`, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        allColumns = data.columns;
-                        updateDatasetTable(data.filename, data.columns);
-                        populateColumnSelectors(data.columns);
-                        const cardTitle = document.querySelector('.card-title');
-                        if (cardTitle) {
-                            cardTitle.insertAdjacentHTML(
-                                'afterend',
-                                `<div class="alert alert-success" role="alert">Loaded dataset: ${data.filename}</div>`
-                            );
-                        }
-                    } else {
-                        console.error('Error auto-loading dataset: ' + data.error);
-                    }
-                });
-        }
+    // ==========================================================
+    //  Utility helpers
+    // ==========================================================
+
+    function createOption(value) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = value;
+        return opt;
     }
-    autoLoadDataset();
 
-    // --- Upload dataset ---
-    uploadButton.addEventListener('click', function() {
+    function setSelectOptions(select, options, preserved = []) {
+        select.innerHTML = "";
+        options.forEach(c => {
+            const opt = createOption(c);
+            if (preserved.includes(c)) {
+                opt.selected = true;
+            }
+            select.appendChild(opt);
+        });
+    }
+
+    function getSelected(select) {
+        return Array.from(select.selectedOptions).map(opt => opt.value);
+    }
+
+    // ==========================================================
+    //  DATASET UPLOAD + AUTOLOAD
+    // ==========================================================
+
+    uploadButton.addEventListener("click", () => {
         const file = csvUpload.files[0];
         if (!file) {
-            alert('Please select a file to upload.');
+            alert("Please select a CSV file.");
             return;
         }
 
         const formData = new FormData();
-        formData.append('dataset', file);
+        formData.append("dataset", file);
 
-        fetch('/upload', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
+        fetch("/upload", { method: "POST", body: formData })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) return alert("Upload error: " + data.error);
                 allColumns = data.columns;
-                updateDatasetTable(data.filename, data.columns);
-                populateColumnSelectors(data.columns);
-            } else {
-                alert('Error uploading file: ' + data.error);
-            }
-        });
+                addDatasetRow(data.filename, data.columns);
+                populateInitialSelectors();
+            });
     });
 
-    // --- Update curiosity label ---
-    curiositySlider.addEventListener('input', function() {
-        curiosityValue.textContent = this.value;
-    });
-
-    // --- Run experiment ---
-    runExperimentButton.addEventListener('click', function() {
-        const selectedInputColumns = Array.from(inputColumns.selectedOptions).map(opt => opt.value);
-        const selectedTargetColumns = getTargetColumnConfig();
-
-        if (selectedInputColumns.length === 0 || selectedTargetColumns.length === 0) {
-            alert('Please select at least one input and one target column.');
-            return;
-        }
-
-        const experimentConfig = {
-            model: modelSelect.value,
-            curiosity: curiositySlider.value,
-            input_columns: selectedInputColumns,
-            target_columns: selectedTargetColumns,
-        };
-
-        fetch('/run-experiment', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(experimentConfig)
-        })
-        .then(response => {
-            console.log("Received response from /run-experiment:", response);
-            return response.json();
-        })
-        .then(data => {
-            console.log("Received data from /run-experiment:", data);
-            if (data.success) {
-                displayResults(data);
-            } else {
-                alert('Error running experiment: ' + data.error);
-                console.error('Error running experiment:', data.error);
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            alert('A network error occurred. Check the console for details.');
-        });
-    });
-
-    // --- Dataset table ---
-    function updateDatasetTable(filename, columns) {
-        const newRow = document.createElement('tr');
-        newRow.innerHTML = `
+    function addDatasetRow(filename, columns) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
             <td><button class="btn btn-sm btn-danger">Delete</button></td>
             <td>${filename}</td>
-            <td>${columns.join(', ')}</td>
+            <td>${columns.join(", ")}</td>
         `;
-        datasetTableBody.appendChild(newRow);
+        datasetTableBody.appendChild(tr);
     }
 
-    // --- Populate initial selectors (input + apriori only) ---
-    function populateColumnSelectors(columns) {
-        updateOptions(inputColumns, columns, []);
-        updateOptions(aprioriColumns, columns, []);
+    // ==========================================================
+    //  COLUMN SELECTORS
+    // ==========================================================
+
+    function populateInitialSelectors() {
+        setSelectOptions(inputColumns, allColumns);
+        setSelectOptions(aprioriColumns, allColumns);
     }
 
-    // --- Handle cascading selector updates ---
-    function updateCascadingSelectors() {
-        const selectedInputs = Array.from(inputColumns.selectedOptions).map(opt => opt.value);
+    inputColumns.addEventListener("change", updateAprioriOptions);
 
-        // Collect selected targets from all dynamic target groups
+    function updateAprioriOptions() {
+        const selectedInputs = getSelected(inputColumns);
         const selectedTargets = Array.from(
-            document.querySelectorAll('select[name="target_columns"]')
+            document.querySelectorAll("select[name='target_columns']")
         ).map(sel => sel.value);
 
-        // Filter available columns for apriori
-        const availableForApriori = allColumns.filter(
-            col => !selectedInputs.includes(col) && !selectedTargets.includes(col)
+        const available = allColumns.filter(
+            c => !selectedInputs.includes(c) && !selectedTargets.includes(c)
         );
 
-        updateOptions(
+        setSelectOptions(
             aprioriColumns,
-            availableForApriori,
-            Array.from(aprioriColumns.selectedOptions).map(opt => opt.value)
+            available,
+            getSelected(aprioriColumns)
         );
     }
 
-    // --- Update options in a <select> element ---
-    function updateOptions(selectElement, options, selectedValues) {
-        selectElement.innerHTML = '';
-        options.forEach(col => {
-            const option = document.createElement('option');
-            option.value = col;
-            option.textContent = col;
-            if (selectedValues.includes(col)) {
-                option.selected = true;
-            }
-            selectElement.appendChild(option);
-        });
-    }
+    // ==========================================================
+    //  TARGET PROPERTY GROUPS
+    // ==========================================================
 
-    inputColumns.addEventListener('change', updateCascadingSelectors);
+    addTargetButton.addEventListener("click", () => addTargetGroup());
 
-    // --- Collect dynamic target configuration ---
-    function getTargetColumnConfig() {
-        const config = [];
-        const targetGroups = document.querySelectorAll('.target-group');
-        targetGroups.forEach(group => {
-            const select = group.querySelector('select[name="target_columns"]');
-            const weight = group.querySelector('input[name="weights"]');
-            const optimization = group.querySelector('select[name="max_or_min"]');
-            if (select && select.value) {
-                config.push({
-                    name: select.value,
-                    weight: parseFloat(weight.value),
-                    optimization: optimization.value
-                });
-            }
-        });
-        return config;
-    }
+    function addTargetGroup() {
+        const wrapper = document.createElement("div");
+        wrapper.classList.add("mb-3", "target-group");
 
-    // --- Add a new target property group dynamically ---
-    function addTargetProperty() {
-        const newTargetGroup = document.createElement('div');
-        newTargetGroup.classList.add('mb-3', 'target-group');
         const availableColumns = allColumns.filter(
-            col => !Array.from(inputColumns.selectedOptions).map(opt => opt.value).includes(col)
+            c => !getSelected(inputColumns).includes(c)
         );
 
-        let options = '';
-        availableColumns.forEach(col => {
-            options += `<option value="${col}">${col}</option>`;
-        });
-
-        newTargetGroup.innerHTML = `
+        wrapper.innerHTML = `
             <div class="input-group">
-                <select class="form-select" name="target_columns">${options}</select>
+                <select class="form-select" name="target_columns">
+                    ${availableColumns.map(c => `<option value="${c}">${c}</option>`).join("")}
+                </select>
                 <input type="number" class="form-control" name="weights" value="1.0" step="0.1">
                 <select class="form-select" name="max_or_min">
                     <option value="max">Maximize</option>
                     <option value="min">Minimize</option>
                 </select>
-                <button class="btn btn-danger" type="button" onclick="this.parentElement.parentElement.remove()">Remove</button>
+                <button class="btn btn-danger" type="button">Remove</button>
             </div>
         `;
-        targetPropertiesContainer.appendChild(newTargetGroup);
 
-        newTargetGroup
-            .querySelector('select[name="target_columns"]')
-            .addEventListener('change', updateCascadingSelectors);
-    }
-
-    const addTargetButton = document.getElementById('add-target-property-button');
-    addTargetButton.addEventListener('click', addTargetProperty);
-
-    // --- Display experiment results and plots ---
-    function displayResults(data) {
-        // keep reference for optional plots
-        window.experimentData = data;
-
-        console.log("✅ Experiment data received:", data);
-
-        const resultsSection = document.getElementById('results-section');
-        const resultsTableContainer = document.getElementById('results-table-container');
-        resultsTableContainer.innerHTML = data.results_table;
-        resultsSection.style.display = 'block';
-
-        // --- t-SNE plot ---
-        try {
-            const tsneFig = typeof data.tsne_figure === "string"
-                ? JSON.parse(data.tsne_figure)
-                : data.tsne_figure;
-            console.log("t-SNE Figure JSON:", JSON.stringify(tsneFig, null, 2));
-
-            if (tsneFig && tsneFig.data && tsneFig.data.length) {
-                Plotly.newPlot('tsne-plot', tsneFig.data, tsneFig.layout);
-            } else {
-                document.getElementById('tsne-plot').innerHTML =
-                    "<div class='alert alert-warning'>t-SNE JSON empty or invalid.</div>";
-            }
-        } catch (err) {
-            console.error("Error processing t-SNE plot:", err);
-        }
-
-        // --- Scatter plot ---
-        try {
-            const scatterFig = typeof data.target_scatter_figure === "string"
-                ? JSON.parse(data.target_scatter_figure)
-                : data.target_scatter_figure;
-            console.log("Scatter Figure JSON:", JSON.stringify(scatterFig, null, 2));
-
-            if (scatterFig && scatterFig.data && scatterFig.data.length) {
-                Plotly.newPlot('scatter-plot', scatterFig.data, scatterFig.layout);
-            } else {
-                document.getElementById('scatter-plot').innerHTML =
-                    "<div class='alert alert-warning'>Scatter JSON empty or invalid.</div>";
-            }
-        } catch (err) {
-            console.error("Error processing scatter plot:", err);
-        }
-    }
-
-
-
-        // --- Optional additional plots ---
-            // --- Optional additional plots ---
-        const additionalPlotContainer = document.getElementById('additional-plot-container');
-        const plotRadios = document.querySelectorAll('input[name="plot-select"]');
-
-        plotRadios.forEach(radio => {
-            radio.addEventListener('change', function() {
-                additionalPlotContainer.innerHTML = '';
-                if (this.checked) {
-                    const plotDiv = document.createElement('div');
-                    plotDiv.id = `${this.value}-plot`;
-                    additionalPlotContainer.appendChild(plotDiv);
-
-                    // We'll handle optional plots only if returned by backend
-                    if (window.experimentData) {
-                        const data = window.experimentData;
-                        if (this.value === 'parallel-coordinates' && data.parallel_coordinates_data) {
-                            Plotly.newPlot(plotDiv, [data.parallel_coordinates_data], {
-                                title: 'Parallel Coordinates Plot'
-                            });
-                        } else if (this.value === 'correlation-heatmap' && data.correlation_heatmap_data) {
-                            Plotly.newPlot(plotDiv, [{
-                                z: data.correlation_heatmap_data.z,
-                                x: data.correlation_heatmap_data.x,
-                                y: data.correlation_heatmap_data.y,
-                                type: 'heatmap',
-                                colorscale: 'Viridis'
-                            }], {
-                                title: 'Correlation Heatmap'
-                            });
-                        }
-                    }
-                }
-            });
+        wrapper.querySelector(".btn-danger").addEventListener("click", () => {
+            wrapper.remove();
+            updateAprioriOptions();
         });
+
+        wrapper.querySelector("select[name='target_columns']")
+            .addEventListener("change", updateAprioriOptions);
+
+        targetContainer.appendChild(wrapper);
+    }
+
+    function collectTargetConfig() {
+        return Array.from(document.querySelectorAll(".target-group")).map(g => ({
+            name: g.querySelector("select[name='target_columns']").value,
+            weight: parseFloat(g.querySelector("input[name='weights']").value),
+            optimization: g.querySelector("select[name='max_or_min']").value
+        }));
+    }
+
+    // ==========================================================
+    //  RUN EXPERIMENT
+    // ==========================================================
+
+    curiositySlider.addEventListener("input", () => {
+        curiosityValue.textContent = curiositySlider.value;
     });
 
+    runButton.addEventListener("click", runExperiment);
+
+    function runExperiment() {
+        const selectedInputs = getSelected(inputColumns);
+        const targets = collectTargetConfig();
+
+        if (selectedInputs.length === 0 || targets.length === 0) {
+            return alert("Please select input and target columns.");
+        }
+
+        const payload = {
+            model: modelSelect.value,
+            curiosity: curiositySlider.value,
+            input_columns: selectedInputs,
+            target_columns: targets
+        };
+
+        console.log("🚀 Sending experiment request:", payload);
+
+        fetch("/run-experiment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        })
+            .then(r => r.json())
+            .then(data => {
+                console.log("📦 Received response:", data);
+                
+                if (!data.success) {
+                    console.error("❌ Experiment error:", data.error);
+                    return alert("Error: " + data.error);
+                }
+
+                // Debug the received figures
+                console.log("🔍 t-SNE figure data length:", 
+                    data.tsne_figure?.data?.[0]?.x?.length || "MISSING");
+                console.log("🔍 Scatter figure data length:", 
+                    data.target_scatter_figure?.data?.[0]?.x?.length || "MISSING");
+
+                experimentData = data;
+                renderResults(data);
+            })
+            .catch(err => {
+                console.error("💥 Network error:", err);
+                alert("Network error — see console.");
+            });
+    }
+
+    // ==========================================================
+    //  RENDER RESULTS + PLOTS
+    // ==========================================================
+
+    function renderResults(data) {
+        console.log("🎨 Rendering results...");
+        
+        resultsSection.style.display = "block";
+        resultsTableContainer.innerHTML = data.results_table;
+
+        drawTSNE(data.tsne_figure);
+        drawScatter(data.target_scatter_figure);
+    }
+
+    function drawTSNE(fig) {
+        console.log("📊 Drawing t-SNE plot...");
+        
+        try {
+            // Handle both string and object
+            if (typeof fig === "string") {
+                console.log("⚠️ t-SNE figure is string, parsing...");
+                fig = JSON.parse(fig);
+            }
+
+            console.log("t-SNE figure structure:", {
+                hasData: !!fig?.data,
+                dataLength: fig?.data?.length,
+                firstTraceLength: fig?.data?.[0]?.x?.length
+            });
+
+            if (!fig || !fig.data || fig.data.length === 0) {
+                console.error("❌ Empty t-SNE figure");
+                tsnePlotDiv.innerHTML = 
+                    "<div class='alert alert-warning'>Empty t-SNE figure.</div>";
+                return;
+            }
+
+            if (!fig.data[0].x || fig.data[0].x.length === 0) {
+                console.error("❌ t-SNE trace has no data points");
+                tsnePlotDiv.innerHTML = 
+                    "<div class='alert alert-warning'>No data points in t-SNE trace.</div>";
+                return;
+            }
+
+            console.log("✅ Plotting t-SNE with", fig.data[0].x.length, "points");
+            Plotly.newPlot(tsnePlotDiv, fig.data, fig.layout, {responsive: true});
+            
+        } catch (err) {
+            console.error("💥 t-SNE plotting error:", err);
+            tsnePlotDiv.innerHTML = 
+                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
+        }
+    }
+
+    function drawScatter(fig) {
+        console.log("📊 Drawing scatter plot...");
+        
+        try {
+            // Handle both string and object
+            if (typeof fig === "string") {
+                console.log("⚠️ Scatter figure is string, parsing...");
+                fig = JSON.parse(fig);
+            }
+
+            console.log("Scatter figure structure:", {
+                hasData: !!fig?.data,
+                dataLength: fig?.data?.length,
+                firstTraceLength: fig?.data?.[0]?.x?.length
+            });
+
+            if (!fig || !fig.data || fig.data.length === 0) {
+                console.error("❌ Empty scatter figure");
+                scatterPlotDiv.innerHTML = 
+                    "<div class='alert alert-warning'>Empty scatter plot.</div>";
+                return;
+            }
+
+            if (!fig.data[0].x || fig.data[0].x.length === 0) {
+                console.error("❌ Scatter trace has no data points");
+                scatterPlotDiv.innerHTML = 
+                    "<div class='alert alert-warning'>No data points in scatter trace.</div>";
+                return;
+            }
+
+            console.log("✅ Plotting scatter with", fig.data[0].x.length, "points");
+            Plotly.newPlot(scatterPlotDiv, fig.data, fig.layout, {responsive: true});
+            
+        } catch (err) {
+            console.error("💥 Scatter plotting error:", err);
+            scatterPlotDiv.innerHTML = 
+                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
+        }
+    }
+
+
+    // ==========================================================
+    //  RESPONSIVE RESIZING
+    // ==========================================================
+
+    window.addEventListener("resize", () => {
+        if (tsnePlotDiv && tsnePlotDiv.data) {
+            Plotly.Plots.resize(tsnePlotDiv);
+        }
+        if (scatterPlotDiv && scatterPlotDiv.data) {
+            Plotly.Plots.resize(scatterPlotDiv);
+        }
+    });
+});

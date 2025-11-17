@@ -1,5 +1,6 @@
 from scipy.spatial import distance_matrix
 import numpy as np
+from scipy.stats import norm
 
 
 def enforce_diversity(candidate_inputs, selected_inputs, min_distance=0.1):
@@ -42,8 +43,7 @@ def calculate_novelty(features, labeled_features):
 
     return novelty
 
-from scipy.stats import norm
-import numpy as np
+
 
 def select_acquisition_function(curiosity: float, n_labeled_samples: int) -> str:
     """

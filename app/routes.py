@@ -1,4 +1,3 @@
-
 import logging
 import os
 import itertools
@@ -41,7 +40,7 @@ def dashboard():
 
 @main_bp.route("/scenario", methods=["GET", "POST"])
 def scenario():
-    scenario_.jsxile = os.path.join(os.path.dirname(__file__), "..", "data", "scenarios.csv")
+    scenario_file = os.path.join(os.path.dirname(__file__), "..", "data", "scenarios.csv")
 
     default_data = [
         ["Scenario 1", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
@@ -262,8 +261,6 @@ def run_experiment():
             results_df = pd.DataFrame()
 
         logging.info(f"Results DataFrame shape after model evaluation: {results_df.shape}")
-        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
-            logging.info(f"Results DataFrame head:\n{results_df.head()}")
 
         # ---- Build Visualization ----
         # Prepare data for t-SNE plot
@@ -273,23 +270,19 @@ def run_experiment():
         # Merge results to get Utility scores
         if "Utility" in results_df.columns:
             tsne_df = tsne_df.merge(results_df[['Utility']], left_index=True, right_index=True, how='left')
-            tsne_df["Utility"].fillna(0, inplace=True)
+            tsne_df["Utility"] = tsne_df["Utility"].fillna(0)
         else:
             tsne_df["Utility"] = 0.0
 
         logging.info(f"t-SNE DataFrame shape: {tsne_df.shape}")
-        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
-            logging.info(f"t-SNE DataFrame head:\n{tsne_df.head()}")
 
         tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_df, input_columns)
 
         # Prepare data for scatter plot
         scatter_df = results_df.copy()
-        scatter_df["is_train_data"] = False # All results are suggestions
+        scatter_df["is_train_data"] = False  # All results are suggestions
 
         logging.info(f"Scatter DataFrame shape: {scatter_df.shape}")
-        with pd.option_context('display.max_rows', 10, 'display.max_columns', None):
-            logging.info(f"Scatter DataFrame head:\n{scatter_df.head()}")
 
         target_scatter_figure = PlotGenerator.create_target_scatter_plot(scatter_df, target_columns)
 
@@ -299,13 +292,11 @@ def run_experiment():
             "tsne_figure": tsne_figure,
             "target_scatter_figure": target_scatter_figure
         }
-        logging.info(f"Sending response to frontend. TSNE JSON is empty: {not tsne_figure or tsne_figure == '{}'}. Scatter JSON is empty: {not target_scatter_figure or target_scatter_figure == '{}'}")
 
         # ---- Return to Frontend ----
+        logging.info("Experiment completed successfully")
         return jsonify(response_data)
+
     except Exception as e:
         logging.exception("An error occurred in /run-experiment")
-        with open("flask_server.log", "w") as f:
-            import traceback
-            f.write(traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)}), 500
