@@ -4,18 +4,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
-from sklearn.preprocessing import RobustScaler
+# Import both scalers, but use StandardScaler below
+from sklearn.preprocessing import RobustScaler, StandardScaler 
 
 # Internal Imports
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.utils.utils import calculate_novelty
 
 # ==========================================
-# 1. THE MAML MODEL CLASS
+# 1. THE MAML MODEL CLASS (Simplified Architecture)
 # ==========================================
 
 class MAMLModel(nn.Module):
-    def __init__(self, input_size, output_size, hidden_size=128, num_layers=3, dropout_rate=0.3):
+    # Reduced hidden_size to 64 and num_layers to 2 for 97 samples
+    def __init__(self, input_size, output_size, hidden_size=64, num_layers=2, dropout_rate=0.3):
         super(MAMLModel, self).__init__()
         
         self.input_size = input_size
@@ -26,6 +28,9 @@ class MAMLModel(nn.Module):
         self.is_trained = False
         self.scaler_x = None
         self.scaler_y = None
+        # NEW: Attributes to store min/max of training targets for potential clipping
+        self.y_min_train = None
+        self.y_max_train = None
         
         # --- Architecture ---
         self.input_layer = nn.Linear(input_size, hidden_size)
@@ -138,6 +143,19 @@ class MAMLModel(nn.Module):
         # 5. Inverse Transform to Original Scale
         mean_preds_original = self.scaler_y.inverse_transform(mean_preds_scaled)
         
+        # --- NEW: Clip predictions to the observed training range ---
+        if self.y_min_train is not None and self.y_max_train is not None:
+            # Add a 20% buffer to allow for reasonable extrapolation beyond the training range
+            buffer_min = self.y_min_train - (np.abs(self.y_min_train) * 0.2)
+            buffer_max = self.y_max_train + (np.abs(self.y_max_train) * 0.2)
+            
+            mean_preds_original = np.clip(
+                mean_preds_original, 
+                buffer_min, 
+                buffer_max
+            )
+        # -----------------------------------------------------------
+
         # Inverse transform posterior samples
         # We need to iterate because inverse_transform expects 2D (n_points, n_targets)
         posterior_samples_original_list = []
@@ -165,13 +183,13 @@ class MAMLModel(nn.Module):
 
 
 # ==========================================
-# 2. TRAINING LOGIC
+# 2. TRAINING LOGIC (Scaler and Min/Max Storage Updated)
 # ==========================================
 
 def meta_train(meta_model: MAMLModel, data: pd.DataFrame, input_columns: list, target_columns: list,
-               epochs: int = 100, inner_lr: float = 0.01, outer_lr: float = 0.001,
+               epochs: int = 100, inner_lr: float = 0.005, outer_lr: float = 0.001,
                num_tasks: int = 4, inner_lr_decay: float = 0.95, curiosity: float = 0,
-               min_samples_per_task: int = 3, early_stopping_patience: int = 10):
+               min_samples_per_task: int = 3, early_stopping_patience: int = 20):
     
     # Optimizer Setup
     optimizer = optim.AdamW(meta_model.parameters(), lr=outer_lr, weight_decay=1e-3)
@@ -196,19 +214,26 @@ def meta_train(meta_model: MAMLModel, data: pd.DataFrame, input_columns: list, t
     if labeled_data.empty:
         return meta_model, None, None
 
-    # Scaling
-    scaler_inputs = RobustScaler().fit(labeled_data[input_columns])
-    scaler_targets = RobustScaler().fit(labeled_data[target_columns])
+    # --- SCALING CHANGE: Using StandardScaler for better NN stability ---
+    scaler_inputs = StandardScaler().fit(labeled_data[input_columns])
+    scaler_targets = StandardScaler().fit(labeled_data[target_columns])
     
-    # Attach scalers immediately (useful if training crashes early, at least object has them)
+    # Attach scalers immediately
     meta_model.scaler_x = scaler_inputs
     meta_model.scaler_y = scaler_targets
+
+    # --- NEW: Store min/max for clipping ---
+    y_train_orig = labeled_data[target_columns].values
+    meta_model.y_min_train = np.min(y_train_orig, axis=0)
+    meta_model.y_max_train = np.max(y_train_orig, axis=0)
+    # ---------------------------------------
     
     inputs = torch.tensor(scaler_inputs.transform(labeled_data[input_columns]), dtype=torch.float32)
     targets = torch.tensor(scaler_targets.transform(labeled_data[target_columns]), dtype=torch.float32)
     
     loss_function = nn.SmoothL1Loss() if len(labeled_data) >= 10 else nn.MSELoss()
-    batch_size = max(2, min(8, len(inputs) // 4))
+    # batch_size is defined but not used here, keep it for reference
+    # batch_size = max(2, min(8, len(inputs) // 4)) 
     
     # --- Main Loop ---
     best_loss = float('inf')

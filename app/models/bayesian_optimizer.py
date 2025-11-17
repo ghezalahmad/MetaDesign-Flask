@@ -743,9 +743,30 @@ def multi_objective_bayesian_optimization(
         if not getattr(surrogate_model, 'is_trained', True):
              raise ValueError("Provided surrogate_model is not trained.")
 
-        all_mu_orig, all_sigma_orig = surrogate_model.predict_with_uncertainty(
-            candidate_inputs_df
+        #all_mu_orig, all_sigma_orig = surrogate_model.predict_with_uncertainty(candidate_inputs_df)
+        # --- Start of new code ---
+        # Define how many samples for uncertainty (MAML model uses this)
+        num_samples_per_eval = 30 
+                
+        # Call the surrogate model, passing all required arguments
+        pred_output = surrogate_model.predict_with_uncertainty(
+            candidate_inputs_df,
+            input_columns=input_columns,      # Pass the input_columns variable
+            num_samples=num_samples_per_eval  # Pass the num_samples
         )
+
+        # Check how many values were returned to support MAML (3) and lolopy (2)
+        if len(pred_output) == 3:
+            # This is your MAML model (mean, std, posterior)
+            all_mu_orig, all_sigma_orig, _ = pred_output
+        elif len(pred_output) == 2:
+            # This is your lolopy model (mean, std)
+            all_mu_orig, all_sigma_orig = pred_output
+        else:
+            raise ValueError(
+                "Surrogate model's predict_with_uncertainty returned an unexpected number of values."
+            )
+        # --- End of new code ---
 
         if all_mu_orig.ndim == 1: all_mu_orig = all_mu_orig.reshape(-1, 1)
         if all_sigma_orig.ndim == 1: all_sigma_orig = all_sigma_orig.reshape(-1, 1)
