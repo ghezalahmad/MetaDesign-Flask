@@ -14,7 +14,9 @@ from sklearn.manifold import TSNE
 # ---- Model Imports ----
 from app.models.models import MAMLModel, evaluate_maml, meta_train
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
+from app.models.gp_model import GPModel, train_gp_model, evaluate_gp_model
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
+from app.models.dkl_surrogate_model import DKLModel, train_dkl_model, evaluate_dkl_model
 from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
@@ -229,7 +231,7 @@ def run_experiment():
         weights = np.array([float(t['weight']) for t in target_columns_config])
         max_or_min = [t['optimization'] for t in target_columns_config]
 
-        # ---- Model Execution ----
+    # ---- Model Execution ----
         if model_name == 'maml':
             model = MAMLModel(input_size=len(input_columns), output_size=len(target_columns))
             results_df = evaluate_maml(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
@@ -248,9 +250,18 @@ def run_experiment():
             model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
             model, _, _ = pinn_train(model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
             results_df = evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        elif model_name == 'gp':
+            # Gaussian Process Regressor: The BO classic
+            model, _, _ = train_gp_model(data, input_columns, target_columns)
+            results_df = evaluate_gp_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
         elif model_name == 'lolopy':
             model, _, _ = train_lolopy_model(data, input_columns, target_columns)
             results_df = evaluate_lolopy_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+
+        elif model_name == 'dkl':
+            # Deep Kernel Learning (DKL): GP + NN Feature Extraction (SOTA for structured uncertainty)
+            model, _, _ = train_dkl_model(data, input_columns, target_columns)
+            results_df = evaluate_dkl_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
         elif model_name == 'ensemble':
             pinn_model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
             pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(pinn_model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
