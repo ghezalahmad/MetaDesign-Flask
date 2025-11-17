@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 from sklearn.manifold import TSNE
 
 # ---- Model Imports ----
-from app.models.models import MAMLModel, evaluate_maml
+from app.models.models import MAMLModel, evaluate_maml, meta_train
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
 from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
 from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
