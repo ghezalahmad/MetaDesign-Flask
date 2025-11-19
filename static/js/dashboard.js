@@ -1,5 +1,5 @@
 // ==========================================================
-//  DASHBOARD.JS — CLEAN, STABLE, PRODUCTION VERSION
+//  DASHBOARD.JS — FINAL VERSION WITH DATASET SELECTION
 // ==========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -26,8 +26,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const addTargetButton = document.getElementById("add-target-property-button");
 
-    let allColumns = [];
+    // ----- STATE VARIABLES -----
+    let allColumns = []; // Columns of the currently active dataset
+    let uploadedDatasets = []; // Array to store all uploaded datasets: {filename, columns, isActive}
     let experimentData = null;
+    let resultsDataTable = null; // Variable for DataTables instance
 
     // ==========================================================
     //  Utility helpers
@@ -56,7 +59,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  DATASET UPLOAD + AUTOLOAD
+    //  DATASET MANAGEMENT (UPLOAD, SELECTION, DISPLAY)
     // ==========================================================
 
     uploadButton.addEventListener("click", () => {
@@ -73,20 +76,101 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => r.json())
             .then(data => {
                 if (!data.success) return alert("Upload error: " + data.error);
-                allColumns = data.columns;
-                addDatasetRow(data.filename, data.columns);
-                populateInitialSelectors();
+                
+                // Store the new dataset
+                const newDataset = {
+                    filename: data.filename,
+                    columns: data.columns,
+                    isActive: false 
+                };
+                uploadedDatasets.push(newDataset);
+                
+                // Add the row to the table
+                const newIndex = uploadedDatasets.length - 1;
+                addDatasetRow(newDataset, newIndex);
+
+                // Automatically select the first uploaded dataset if none is active
+                if (uploadedDatasets.filter(d => d.isActive).length === 0) {
+                    handleDatasetSelection(newIndex);
+                }
             });
     });
 
-    function addDatasetRow(filename, columns) {
+    /**
+     * Creates a table row for a new dataset and adds a Select button.
+     */
+    function addDatasetRow(dataset, index) {
         const tr = document.createElement("tr");
+        tr.dataset.index = index;
+        
         tr.innerHTML = `
-            <td><button class="btn btn-sm btn-danger">Delete</button></td>
-            <td>${filename}</td>
-            <td>${columns.join(", ")}</td>
+            <td><button class="btn btn-sm btn-danger delete-btn">Delete</button></td>
+            <td>${dataset.filename}</td>
+            <td>${dataset.columns.join(", ")}</td>
+            <td><button class="btn btn-sm btn-primary select-btn">Select</button></td>
         `;
+        
         datasetTableBody.appendChild(tr);
+
+        // Attach event listener to the Select button
+        tr.querySelector(".select-btn").addEventListener("click", () => {
+            handleDatasetSelection(index);
+        });
+        
+        // Initial styling based on activity
+        updateTableRowStyle(index, dataset.isActive);
+    }
+
+    /**
+     * Handles the selection of a new active dataset.
+     */
+    function handleDatasetSelection(index) {
+        // 1. Update the active status in the array and update styles
+        uploadedDatasets.forEach((d, i) => {
+            d.isActive = (i === index);
+            updateTableRowStyle(i, d.isActive);
+        });
+
+        const selectedDataset = uploadedDatasets[index];
+        allColumns = selectedDataset.columns;
+        
+        console.log(`✅ Dataset '${selectedDataset.filename}' selected. Available columns updated.`);
+
+        // 2. Clear existing configuration selectors and repopulate them
+        // Note: Target groups are removed to prevent mixing columns from different datasets
+        inputColumns.innerHTML = '';
+        aprioriColumns.innerHTML = '';
+        targetContainer.innerHTML = '';
+        
+        populateInitialSelectors();
+    }
+    
+    /**
+     * Updates the visual style of a table row based on its active state.
+     */
+    function updateTableRowStyle(index, isActive) {
+        const row = datasetTableBody.querySelector(`tr[data-index="${index}"]`);
+        const selectBtn = row?.querySelector(".select-btn");
+        
+        if (row) {
+            if (isActive) {
+                row.classList.add('table-success', 'fw-bold');
+                if (selectBtn) {
+                    selectBtn.textContent = 'Selected';
+                    selectBtn.classList.remove('btn-primary');
+                    selectBtn.classList.add('btn-secondary');
+                    selectBtn.disabled = true;
+                }
+            } else {
+                row.classList.remove('table-success', 'fw-bold');
+                if (selectBtn) {
+                    selectBtn.textContent = 'Select';
+                    selectBtn.classList.remove('btn-secondary');
+                    selectBtn.classList.add('btn-primary');
+                    selectBtn.disabled = false;
+                }
+            }
+        }
     }
 
     // ==========================================================
@@ -101,11 +185,15 @@ document.addEventListener("DOMContentLoaded", () => {
     inputColumns.addEventListener("change", updateAprioriOptions);
 
     function updateAprioriOptions() {
+        // Only run if a dataset is loaded
+        if (allColumns.length === 0) return;
+        
         const selectedInputs = getSelected(inputColumns);
         const selectedTargets = Array.from(
             document.querySelectorAll("select[name='target_columns']")
         ).map(sel => sel.value);
 
+        // Filters columns not used as Input or Target
         const available = allColumns.filter(
             c => !selectedInputs.includes(c) && !selectedTargets.includes(c)
         );
@@ -124,17 +212,43 @@ document.addEventListener("DOMContentLoaded", () => {
     addTargetButton.addEventListener("click", () => addTargetGroup());
 
     function addTargetGroup() {
+        // Only allow adding if a dataset is loaded
+        if (allColumns.length === 0) {
+            alert("Please upload and select a dataset first.");
+            return;
+        }
+
         const wrapper = document.createElement("div");
         wrapper.classList.add("mb-3", "target-group");
 
+        // Available columns are those not selected as Input
         const availableColumns = allColumns.filter(
             c => !getSelected(inputColumns).includes(c)
         );
+        
+        // Find columns already used as targets to avoid duplicates in the dropdown
+        const currentTargets = Array.from(document.querySelectorAll(".target-group select[name='target_columns']"))
+                                    .map(sel => sel.value);
+        
+        const optionsHTML = availableColumns
+            .filter(c => !currentTargets.includes(c)) // Filter out already assigned targets
+            .map(c => `<option value="${c}">${c}</option>`)
+            .join("");
+            
+        if (optionsHTML === "" && availableColumns.length > 0) {
+             // Happens if all available columns are already assigned as targets
+             alert("All available columns are already assigned as target properties.");
+             return;
+        } else if (availableColumns.length === 0) {
+             alert("No columns left to be assigned as target properties.");
+             return;
+        }
+
 
         wrapper.innerHTML = `
             <div class="input-group">
                 <select class="form-select" name="target_columns">
-                    ${availableColumns.map(c => `<option value="${c}">${c}</option>`).join("")}
+                    ${optionsHTML}
                 </select>
                 <input type="number" class="form-control" name="weights" value="1.0" step="0.1">
                 <select class="form-select" name="max_or_min">
@@ -147,13 +261,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         wrapper.querySelector(".btn-danger").addEventListener("click", () => {
             wrapper.remove();
-            updateAprioriOptions();
+            updateAprioriOptions(); // Recalculate apriori options after removal
         });
 
         wrapper.querySelector("select[name='target_columns']")
             .addEventListener("change", updateAprioriOptions);
 
         targetContainer.appendChild(wrapper);
+        updateAprioriOptions(); // Recalculate apriori options after adding
     }
 
     function collectTargetConfig() {
@@ -181,10 +296,18 @@ document.addEventListener("DOMContentLoaded", () => {
         if (selectedInputs.length === 0 || targets.length === 0) {
             return alert("Please select input and target columns.");
         }
+        
+        // Find the filename of the currently active dataset to send to the backend
+        const activeDataset = uploadedDatasets.find(d => d.isActive);
+        if (!activeDataset) {
+             return alert("No dataset is currently selected. Please select one from the table.");
+        }
+
 
         const payload = {
             model: modelSelect.value,
             curiosity: curiositySlider.value,
+            dataset_filename: activeDataset.filename, // Send the filename to the backend
             input_columns: selectedInputs,
             target_columns: targets
         };
@@ -205,12 +328,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     return alert("Error: " + data.error);
                 }
 
-                // Debug the received figures
-                console.log("🔍 t-SNE figure data length:", 
-                    data.tsne_figure?.data?.[0]?.x?.length || "MISSING");
-                console.log("🔍 Scatter figure data length:", 
-                    data.target_scatter_figure?.data?.[0]?.x?.length || "MISSING");
-
                 experimentData = data;
                 renderResults(data);
             })
@@ -228,43 +345,107 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("🎨 Rendering results...");
         
         resultsSection.style.display = "block";
-        resultsTableContainer.innerHTML = data.results_table;
 
+        // --- DataTables Initialization ---
+        
+        if (resultsDataTable) {
+            resultsDataTable.destroy();
+            resultsDataTable = null;
+            resultsTableContainer.innerHTML = '';
+            console.log("ℹ️ Previous DataTable instance destroyed.");
+        }
+
+        resultsTableContainer.innerHTML = data.results_table; 
+        
+        const newTable = resultsTableContainer.querySelector("table"); 
+        
+        if (newTable) {
+            if (!newTable.classList.contains('table')) {
+                newTable.classList.add('table', 'table-striped', 'w-100');
+            }
+            
+            console.log("Initializing DataTable on the results table...");
+            
+            resultsDataTable = new DataTable(newTable, {
+                paging: true,
+                searching: true,
+                ordering: true,
+                info: true,
+                responsive: true,
+                dom: 'lfrtipB', 
+                buttons: [
+                    {
+                        extend: 'csv',
+                        text: '<i class="bi bi-file-earmark-arrow-down"></i> Download CSV',
+                        className: 'btn-sm btn-primary ms-2', 
+                        exportOptions: {
+                            modifier: {
+                                page: 'current' 
+                            }
+                        }
+                    },
+                    {
+                        extend: 'excel',
+                        text: '<i class="bi bi-file-earmark-excel"></i> Download Excel',
+                        className: 'btn-sm btn-success ms-2', 
+                        exportOptions: {
+                            modifier: {
+                                page: 'current'
+                            }
+                        }
+                    }
+                ]
+            });
+            console.log("✅ DataTable initialized successfully.");
+        } else {
+            console.warn("Table element not found inside resultsTableContainer.");
+        }
+        
         drawTSNE(data.tsne_figure);
         drawScatter(data.target_scatter_figure);
+        // Note: The backend must ensure that the prediction_error_plot is included in 'data'
+        // For now, we assume it's included and render it if available.
+        if (data.prediction_error_plot) {
+            drawPredictionError(data.prediction_error_plot);
+        }
+    }
+
+    function drawPredictionError(fig) {
+        console.log("📊 Drawing prediction error plot...");
+        const predErrorPlotDiv = document.getElementById("prediction-error-plot");
+
+        try {
+            if (window.Plotly) Plotly.purge(predErrorPlotDiv); 
+            if (typeof fig === "string") fig = JSON.parse(fig);
+
+            if (!fig || !fig.data || fig.data.length === 0) {
+                predErrorPlotDiv.innerHTML = 
+                    "<div class='alert alert-warning'>Empty Prediction Error plot.</div>";
+                return;
+            }
+
+            Plotly.newPlot(predErrorPlotDiv, fig.data, fig.layout, {responsive: true});
+            
+        } catch (err) {
+            console.error("💥 Prediction Error plotting error:", err);
+            predErrorPlotDiv.innerHTML = 
+                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
+        }
     }
 
     function drawTSNE(fig) {
         console.log("📊 Drawing t-SNE plot...");
         
         try {
-            // Handle both string and object
-            if (typeof fig === "string") {
-                console.log("⚠️ t-SNE figure is string, parsing...");
-                fig = JSON.parse(fig);
-            }
-
-            console.log("t-SNE figure structure:", {
-                hasData: !!fig?.data,
-                dataLength: fig?.data?.length,
-                firstTraceLength: fig?.data?.[0]?.x?.length
-            });
+            if (window.Plotly) Plotly.purge(tsnePlotDiv); 
+            if (typeof fig === "string") fig = JSON.parse(fig);
 
             if (!fig || !fig.data || fig.data.length === 0) {
-                console.error("❌ Empty t-SNE figure");
                 tsnePlotDiv.innerHTML = 
                     "<div class='alert alert-warning'>Empty t-SNE figure.</div>";
                 return;
             }
 
-            if (!fig.data[0].x || fig.data[0].x.length === 0) {
-                console.error("❌ t-SNE trace has no data points");
-                tsnePlotDiv.innerHTML = 
-                    "<div class='alert alert-warning'>No data points in t-SNE trace.</div>";
-                return;
-            }
-
-            console.log("✅ Plotting t-SNE with", fig.data[0].x.length, "points");
             Plotly.newPlot(tsnePlotDiv, fig.data, fig.layout, {responsive: true});
             
         } catch (err) {
@@ -278,33 +459,15 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("📊 Drawing scatter plot...");
         
         try {
-            // Handle both string and object
-            if (typeof fig === "string") {
-                console.log("⚠️ Scatter figure is string, parsing...");
-                fig = JSON.parse(fig);
-            }
-
-            console.log("Scatter figure structure:", {
-                hasData: !!fig?.data,
-                dataLength: fig?.data?.length,
-                firstTraceLength: fig?.data?.[0]?.x?.length
-            });
+            if (window.Plotly) Plotly.purge(scatterPlotDiv); 
+            if (typeof fig === "string") fig = JSON.parse(fig);
 
             if (!fig || !fig.data || fig.data.length === 0) {
-                console.error("❌ Empty scatter figure");
                 scatterPlotDiv.innerHTML = 
                     "<div class='alert alert-warning'>Empty scatter plot.</div>";
                 return;
             }
 
-            if (!fig.data[0].x || fig.data[0].x.length === 0) {
-                console.error("❌ Scatter trace has no data points");
-                scatterPlotDiv.innerHTML = 
-                    "<div class='alert alert-warning'>No data points in scatter trace.</div>";
-                return;
-            }
-
-            console.log("✅ Plotting scatter with", fig.data[0].x.length, "points");
             Plotly.newPlot(scatterPlotDiv, fig.data, fig.layout, {responsive: true});
             
         } catch (err) {
@@ -325,6 +488,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (scatterPlotDiv && scatterPlotDiv.data) {
             Plotly.Plots.resize(scatterPlotDiv);
+        }
+        if (resultsDataTable) {
+             resultsDataTable.columns.adjust().draw();
         }
     });
 });

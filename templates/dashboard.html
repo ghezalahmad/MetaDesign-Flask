@@ -1,4 +1,10 @@
 {% extends "base.html" %}
+
+{% block head %}
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/2.0.8/css/dataTables.bootstrap5.min.css"/>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/3.0.2/css/buttons.bootstrap5.min.css"/>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="card">
@@ -20,6 +26,7 @@
                         <th>Actions</th>
                         <th>Name</th>
                         <th>Columns</th>
+                        <th>Select</th> 
                     </tr>
                 </thead>
                 <tbody id="dataset-table-body">
@@ -141,17 +148,28 @@
                     </a>
                 </h5>
                 <div class="collapse show" id="results-table-collapse">
-                    <div id="results-table-container"></div>
+                    <div class="table-responsive">
+                        <div id="results-table-container"></div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 {% endblock %}
+
 {% block scripts %}
-    <!-- Load the latest Plotly.js (v2.27.0) -->
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 
-    <!-- Then load your dashboard logic -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+    <script type="text/javascript" src="https://cdn.datatables.net/2.0.8/js/dataTables.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/2.0.8/js/dataTables.bootstrap5.min.js"></script>
+
+    <script type="text/javascript" src="https://cdn.datatables.net/buttons/3.0.2/js/dataTables.buttons.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/buttons/3.0.2/js/buttons.bootstrap5.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script type="text/javascript" src="https://cdn.datatables.net/buttons/3.0.2/js/buttons.html5.min.js"></script>
+    
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
