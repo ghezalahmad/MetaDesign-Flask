@@ -1,5 +1,5 @@
 // ==========================================================
-//  DASHBOARD.JS — FINAL VERSION WITH DATASET SELECTION
+//  DASHBOARD.JS — FINAL VERSION WITH DATASET SELECTION AND HELP FEATURES
 // ==========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -13,18 +13,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const targetContainer = document.getElementById("target-properties-container");
 
     const modelSelect = document.getElementById("model-select");
+    const modelHelpButton = document.getElementById("model-help-button"); // NEW: Reference to the help button
     const curiositySlider = document.getElementById("curiosity-slider");
-    const curiosityValue = document.getElementById("curiosity-value");
+    const curiosityValueDisplay = document.getElementById("curiosity-value-display"); 
+    const curiosityGuidanceText = document.getElementById("curiosity-guidance-text"); 
 
     const runButton = document.getElementById("run-experiment-button");
+    const resultsSection = document.getElementById("results-section");
+    const resultsTableContainer = document.getElementById("results-table-container");
+    const addTargetButton = document.getElementById("add-target-property-button");
 
     const tsnePlotDiv = document.getElementById("tsne-plot");
     const scatterPlotDiv = document.getElementById("scatter-plot");
 
-    const resultsSection = document.getElementById("results-section");
-    const resultsTableContainer = document.getElementById("results-table-container");
-
-    const addTargetButton = document.getElementById("add-target-property-button");
 
     // ----- STATE VARIABLES -----
     let allColumns = []; // Columns of the currently active dataset
@@ -32,10 +33,60 @@ document.addEventListener("DOMContentLoaded", () => {
     let experimentData = null;
     let resultsDataTable = null; // Variable for DataTables instance
 
-    // ==========================================================
-    //  Utility helpers
-    // ==========================================================
+    // ----- MODEL DESCRIPTIONS -----
+    // NOTE: HTML is included for better formatting in the popover
+    const MODEL_INFO = {
+        'pinn': {
+            name: 'Physics Informed Neural Network (PINN)',
+            description: '<strong>Integrates known physical laws</strong> into the loss function. Best for **sparse datasets** where physical constraints are well-defined. Good generalization, but requires theoretical setup.',
+            warning: 'Best used when you have a **strong theoretical foundation** (known physics) governing material properties.'
+        },
+        'lolopy': {
+            name: 'lolo Random Forest (AI model)',
+            description: 'An optimized **Random Forest** focusing on fast, accurate predictions. Robust to overfitting and excellent for feature importance. Provides a strong, reliable baseline.',
+            warning: 'Generally robust, but may struggle with very high-dimensional or extremely non-linear data.'
+        },
+        'dkl': {
+            name: 'Deep Kernel Learning (DKL)',
+            description: 'Combines the feature-learning of a Neural Network (NN) with the **uncertainty quantification of a Gaussian Process (GP)**. Provides superior predictive power with reliable uncertainty estimates.',
+            warning: 'Computationally more expensive than standard RF or NN models, but provides superior **uncertainty metrics** crucial for active learning.'
+        },
+        'rf': {
+            name: 'Random Forest (RF)',
+            description: 'A classic ensemble method. Highly stable, robust to outliers, and requires minimal preprocessing. A great choice for fast, **reliable predictions** on standard data.',
+            warning: 'Does **not extrapolate well** outside the range of the training data. Be cautious when exploring new regions.'
+        },
+        'gp': {
+            name: 'Gaussian Process (GP)',
+            description: 'Non-parametric model that provides accurate **uncertainty estimates (error bars)**, which are critical for effective exploration. Works best with **smaller, high-quality datasets**.',
+            warning: 'Scalability is a major limitation; computation time increases **cubically** with data points. Not suitable for datasets exceeding a few thousand entries.'
+        },
+        'maml': {
+            name: 'Model-Agnostic Meta-Learning (MAML)',
+            description: 'Designed to train a model\'s initial parameters to **quickly adapt to new, unseen tasks** (datasets) with minimal training data. Useful for diverse sets of small, related materials tasks.',
+            warning: 'Requires prior training on **multiple related datasets** (tasks) to be effective.'
+        },
+        'reptile': {
+            name: 'Reptile (Meta-Learning)',
+            description: 'Iteratively moves the model towards an initialization that **generalizes well across different tasks**. Simpler and often faster than MAML for few-shot learning.',
+            warning: 'Similar to MAML, performs best when leveraging knowledge gained from **multiple prior tasks** or datasets.'
+        },
+        'protonet': {
+            name: 'Prototypical Networks (ProtoNet)',
+            description: 'Primarily used for **few-shot classification** (e.g., categorizing new materials with limited examples). Learns a metric space around a "prototype" vector for each class.',
+            warning: 'Best suited for **classification problems**. Less ideal for continuous regression tasks.'
+        },
+        'ensemble': {
+            name: 'Ensemble Model',
+            description: 'Combines predictions from **multiple different base models** (e.g., RF, GP, DKL) for higher accuracy and robustness. Leverages the "wisdom of the crowd."',
+            warning: 'Can be slower to train and predict due to running multiple models concurrently. Provides **high reliability**.'
+        }
+    };
 
+
+    // ==========================================================
+    //  Utility helpers (Functions remain the same)
+    // ==========================================================
     function createOption(value) {
         const opt = document.createElement("option");
         opt.value = value;
@@ -59,7 +110,75 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  DATASET MANAGEMENT (UPLOAD, SELECTION, DISPLAY)
+    //  HELP FEATURE LOGIC (UPDATED FOR POPOVER)
+    // ==========================================================
+    
+    // Function to update the Popover content
+    function updateModelPopover(selectedValue) {
+        const info = MODEL_INFO[selectedValue];
+        const popover = bootstrap.Popover.getInstance(modelHelpButton);
+
+        if (info && popover) {
+            const content = `
+                <div class="p-1">
+                    <p class="mb-1">${info.description}</p>
+                    <p class="small text-danger mb-0"><strong>Warning:</strong> ${info.warning}</p>
+                </div>
+            `;
+            // Update the popover title and content attributes
+            modelHelpButton.setAttribute('data-bs-original-title', info.name);
+            modelHelpButton.setAttribute('data-bs-content', content);
+            
+            // Re-initialize or update if needed (Popovers handle updates internally when attributes change)
+            popover.dispose(); // Dispose the old instance
+            new bootstrap.Popover(modelHelpButton, { // Create a new one with updated data
+                html: true,
+                sanitize: false,
+                trigger: 'focus' 
+            });
+        }
+    }
+
+    /**
+     * Shows the model information pop-up when a new model is selected.
+     */
+    modelSelect.addEventListener("change", (event) => {
+        const selectedValue = event.target.value;
+        updateModelPopover(selectedValue);
+        // Automatically click the help button to show the popover on change
+        modelHelpButton.click(); 
+        modelHelpButton.focus();
+    });
+
+    // Initialize the popover content for the default selected model on load
+    updateModelPopover(modelSelect.value);
+
+    /**
+     * Provides dynamic guidance for the Curiosity slider.
+     */
+    curiositySlider.addEventListener("input", () => {
+        const value = parseFloat(curiositySlider.value);
+        curiosityValueDisplay.textContent = value.toFixed(1);
+
+        if (value < -1.0) {
+            curiosityGuidanceText.textContent = "Heavy EXPLOITATION: System prioritizes materials predicted to have the highest performance, ignoring model uncertainty. Useful for confirming known optima, but high-risk.";
+        } else if (value >= -1.0 && value < -0.2) {
+            curiosityGuidanceText.textContent = "Focused EXPLOITATION: Prioritizes high-performing, well-understood regions. Use this when you are confident in your model's predictions.";
+        } else if (value >= -0.2 && value <= 0.2) {
+            curiosityGuidanceText.textContent = "Balanced Approach: Equal weighting between performance (Exploit) and uncertainty (Explore). A good default for a mix of optimization and learning.";
+        } else if (value > 0.2 && value <= 1.0) {
+            curiosityGuidanceText.textContent = "Focused EXPLORATION: System prioritizes regions where the model is most uncertain, seeking new data to improve predictions. Use this when data is sparse or incomplete.";
+        } else if (value > 1.0) {
+            curiosityGuidanceText.textContent = "Heavy EXPLORATION: Strongly focused on uncertainty. Will primarily seek information in completely unknown areas, essential for discovering novel material classes.";
+        }
+    });
+    
+    // Trigger initial guidance text on load
+    curiositySlider.dispatchEvent(new Event('input'));
+
+
+    // ==========================================================
+    //  DATASET MANAGEMENT (UPLOAD, SELECTION, DISPLAY) 
     // ==========================================================
 
     uploadButton.addEventListener("click", () => {
@@ -77,7 +196,6 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(data => {
                 if (!data.success) return alert("Upload error: " + data.error);
                 
-                // Store the new dataset
                 const newDataset = {
                     filename: data.filename,
                     columns: data.columns,
@@ -85,20 +203,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 };
                 uploadedDatasets.push(newDataset);
                 
-                // Add the row to the table
                 const newIndex = uploadedDatasets.length - 1;
                 addDatasetRow(newDataset, newIndex);
 
-                // Automatically select the first uploaded dataset if none is active
                 if (uploadedDatasets.filter(d => d.isActive).length === 0) {
                     handleDatasetSelection(newIndex);
                 }
             });
     });
 
-    /**
-     * Creates a table row for a new dataset and adds a Select button.
-     */
     function addDatasetRow(dataset, index) {
         const tr = document.createElement("tr");
         tr.dataset.index = index;
@@ -112,20 +225,14 @@ document.addEventListener("DOMContentLoaded", () => {
         
         datasetTableBody.appendChild(tr);
 
-        // Attach event listener to the Select button
         tr.querySelector(".select-btn").addEventListener("click", () => {
             handleDatasetSelection(index);
         });
         
-        // Initial styling based on activity
         updateTableRowStyle(index, dataset.isActive);
     }
 
-    /**
-     * Handles the selection of a new active dataset.
-     */
     function handleDatasetSelection(index) {
-        // 1. Update the active status in the array and update styles
         uploadedDatasets.forEach((d, i) => {
             d.isActive = (i === index);
             updateTableRowStyle(i, d.isActive);
@@ -136,8 +243,6 @@ document.addEventListener("DOMContentLoaded", () => {
         
         console.log(`✅ Dataset '${selectedDataset.filename}' selected. Available columns updated.`);
 
-        // 2. Clear existing configuration selectors and repopulate them
-        // Note: Target groups are removed to prevent mixing columns from different datasets
         inputColumns.innerHTML = '';
         aprioriColumns.innerHTML = '';
         targetContainer.innerHTML = '';
@@ -145,9 +250,6 @@ document.addEventListener("DOMContentLoaded", () => {
         populateInitialSelectors();
     }
     
-    /**
-     * Updates the visual style of a table row based on its active state.
-     */
     function updateTableRowStyle(index, isActive) {
         const row = datasetTableBody.querySelector(`tr[data-index="${index}"]`);
         const selectBtn = row?.querySelector(".select-btn");
@@ -174,7 +276,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  COLUMN SELECTORS
+    //  COLUMN SELECTORS 
     // ==========================================================
 
     function populateInitialSelectors() {
@@ -185,7 +287,6 @@ document.addEventListener("DOMContentLoaded", () => {
     inputColumns.addEventListener("change", updateAprioriOptions);
 
     function updateAprioriOptions() {
-        // Only run if a dataset is loaded
         if (allColumns.length === 0) return;
         
         const selectedInputs = getSelected(inputColumns);
@@ -193,7 +294,6 @@ document.addEventListener("DOMContentLoaded", () => {
             document.querySelectorAll("select[name='target_columns']")
         ).map(sel => sel.value);
 
-        // Filters columns not used as Input or Target
         const available = allColumns.filter(
             c => !selectedInputs.includes(c) && !selectedTargets.includes(c)
         );
@@ -206,13 +306,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  TARGET PROPERTY GROUPS
+    //  TARGET PROPERTY GROUPS 
     // ==========================================================
 
     addTargetButton.addEventListener("click", () => addTargetGroup());
 
     function addTargetGroup() {
-        // Only allow adding if a dataset is loaded
         if (allColumns.length === 0) {
             alert("Please upload and select a dataset first.");
             return;
@@ -221,22 +320,19 @@ document.addEventListener("DOMContentLoaded", () => {
         const wrapper = document.createElement("div");
         wrapper.classList.add("mb-3", "target-group");
 
-        // Available columns are those not selected as Input
         const availableColumns = allColumns.filter(
             c => !getSelected(inputColumns).includes(c)
         );
         
-        // Find columns already used as targets to avoid duplicates in the dropdown
         const currentTargets = Array.from(document.querySelectorAll(".target-group select[name='target_columns']"))
                                     .map(sel => sel.value);
         
         const optionsHTML = availableColumns
-            .filter(c => !currentTargets.includes(c)) // Filter out already assigned targets
+            .filter(c => !currentTargets.includes(c))
             .map(c => `<option value="${c}">${c}</option>`)
             .join("");
             
         if (optionsHTML === "" && availableColumns.length > 0) {
-             // Happens if all available columns are already assigned as targets
              alert("All available columns are already assigned as target properties.");
              return;
         } else if (availableColumns.length === 0) {
@@ -261,14 +357,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         wrapper.querySelector(".btn-danger").addEventListener("click", () => {
             wrapper.remove();
-            updateAprioriOptions(); // Recalculate apriori options after removal
+            updateAprioriOptions();
         });
 
         wrapper.querySelector("select[name='target_columns']")
             .addEventListener("change", updateAprioriOptions);
 
         targetContainer.appendChild(wrapper);
-        updateAprioriOptions(); // Recalculate apriori options after adding
+        updateAprioriOptions();
     }
 
     function collectTargetConfig() {
@@ -280,12 +376,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  RUN EXPERIMENT
+    //  RUN EXPERIMENT 
     // ==========================================================
-
-    curiositySlider.addEventListener("input", () => {
-        curiosityValue.textContent = curiositySlider.value;
-    });
 
     runButton.addEventListener("click", runExperiment);
 
@@ -297,17 +389,15 @@ document.addEventListener("DOMContentLoaded", () => {
             return alert("Please select input and target columns.");
         }
         
-        // Find the filename of the currently active dataset to send to the backend
         const activeDataset = uploadedDatasets.find(d => d.isActive);
         if (!activeDataset) {
              return alert("No dataset is currently selected. Please select one from the table.");
         }
 
-
         const payload = {
             model: modelSelect.value,
             curiosity: curiositySlider.value,
-            dataset_filename: activeDataset.filename, // Send the filename to the backend
+            dataset_filename: activeDataset.filename,
             input_columns: selectedInputs,
             target_columns: targets
         };
@@ -338,7 +428,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  RENDER RESULTS + PLOTS
+    //  RENDER RESULTS + PLOTS 
     // ==========================================================
 
     function renderResults(data) {
@@ -346,8 +436,6 @@ document.addEventListener("DOMContentLoaded", () => {
         
         resultsSection.style.display = "block";
 
-        // --- DataTables Initialization ---
-        
         if (resultsDataTable) {
             resultsDataTable.destroy();
             resultsDataTable = null;
@@ -403,8 +491,6 @@ document.addEventListener("DOMContentLoaded", () => {
         
         drawTSNE(data.tsne_figure);
         drawScatter(data.target_scatter_figure);
-        // Note: The backend must ensure that the prediction_error_plot is included in 'data'
-        // For now, we assume it's included and render it if available.
         if (data.prediction_error_plot) {
             drawPredictionError(data.prediction_error_plot);
         }
