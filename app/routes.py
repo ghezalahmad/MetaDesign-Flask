@@ -1,6 +1,7 @@
 import logging
 import os
 import itertools
+import json
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -9,9 +10,9 @@ from flask import (
     session, redirect, url_for, send_from_directory
 )
 from werkzeug.utils import secure_filename
-from sklearn.manifold import TSNE
+# Remove explicit TSNE import here as it's handled in PlotGenerator
+# from sklearn.manifold import TSNE
 
-# ---- Model Imports ----
 from app.models.models import MAMLModel, evaluate_maml, meta_train
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
 from app.models.gp_model import GPModel, train_gp_model, evaluate_gp_model
@@ -21,10 +22,70 @@ from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
 from app.models.ensemble import weighted_uncertainty_ensemble
+from app.models.bayesian_optimizer import BayesianOptimizer 
 from app.utils.plot_generator import PlotGenerator
 
 logging.basicConfig(level=logging.DEBUG)
 main_bp = Blueprint('main', __name__)
+
+# --- Model Configuration Dictionary ---
+MODEL_CONFIG = {
+    'maml': {
+        'model_class': MAMLModel,
+        'evaluate_func': evaluate_maml,
+    },
+    'reptile': {
+        'model_class': ReptileModel,
+        'train_func': reptile_train,
+        'evaluate_func': evaluate_reptile,
+        'train_params': (50, 0.001, 5, 16),
+    },
+    'protonet': {
+        'model_class': ProtoNetModel,
+        'train_func': protonet_train,
+        'evaluate_func': evaluate_protonet,
+        'train_params': (50, 0.001, 5, 5, 5),
+    },
+    'rf': {
+        'model_class': RFModel,
+        'train_func': train_rf_model,
+        'evaluate_func': evaluate_rf_model,
+        'train_params': None,
+    },
+    'pinn': {
+        'model_class': PINNModel,
+        'train_func': pinn_train,
+        'evaluate_func': evaluate_pinn,
+        'train_params': (100, 0.001, 0.1, 32),
+    },
+    'gp': {
+        'model_class': GPModel,
+        'train_func': train_gp_model,
+        'evaluate_func': evaluate_gp_model,
+        'train_params': None,
+    },
+    'lolopy': {
+        'model_class': LolopyRFModel,
+        'train_func': train_lolopy_model,
+        'evaluate_func': evaluate_lolopy_model,
+        'train_params': None,
+    },
+    'dkl': {
+        'model_class': DKLModel,
+        'train_func': train_dkl_model,
+        'evaluate_func': evaluate_dkl_model,
+        'train_params': None,
+    },
+}
+
+# ======================================================
+# UTILITY FUNCTIONS
+# ======================================================
+
+def generate_feature_values(feature):
+    if feature['type'] == 'continuous':
+        return np.arange(feature['min'], feature['max'] + feature['step'], feature['step'])
+    return feature['values']
 
 # ======================================================
 # ROUTES
@@ -37,7 +98,11 @@ def index():
 
 @main_bp.route('/dashboard')
 def dashboard():
-    return render_template('dashboard.html')
+    initial_data = {
+        'data_columns': session.get('data_columns', []),
+        'filename': session.get('filename', None)
+    }
+    return render_template('dashboard.html', initial_data=json.dumps(initial_data))
 
 
 @main_bp.route("/scenario", methods=["GET", "POST"])
@@ -138,15 +203,10 @@ def generate_design_space():
 
     if data.get('action') == 'open':
         session['filepath'] = filepath
+        session['filename'] = filename
         return redirect(url_for('main.dashboard', ds=filename))
 
     return redirect(url_for('main.design_space'))
-
-
-def generate_feature_values(feature):
-    if feature['type'] == 'continuous':
-        return np.arange(feature['min'], feature['max'] + feature['step'], feature['step'])
-    return feature['values']
 
 
 @main_bp.route('/download-design-space/<filename>')
@@ -178,6 +238,9 @@ def set_filepath_from_url():
             session['filepath'] = filepath
             try:
                 data = pd.read_csv(filepath)
+                session['data_columns'] = data.columns.tolist()
+                session['filename'] = filename
+                
                 response = {'success': True, 'columns': data.columns.tolist(), 'filename': filename}
                 return jsonify(response)
             except Exception as e:
@@ -201,112 +264,256 @@ def upload_data():
     file.save(filepath)
     session['filepath'] = filepath
 
-    data = pd.read_csv(filepath)
-    session['data_columns'] = data.columns.tolist()
-    return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+    try:
+        data = pd.read_csv(filepath)
+        session['data_columns'] = data.columns.tolist()
+        session['filename'] = filename 
+        return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to read CSV: {str(e)}"})
 
 
 @main_bp.route('/run-experiment', methods=['POST'])
 def run_experiment():
     try:
-        filepath = session.get('filepath')
-        if not filepath or not os.path.exists(filepath):
-            logging.error("Filepath not found in session or file does not exist.")
-            return jsonify({'success': False, 'error': 'Please upload a dataset first.'})
-
-        logging.info(f"Loading data from: {filepath}")
-        data = pd.read_csv(filepath)
-        data['Row number'] = data.index
-        logging.info(f"Original data shape: {data.shape}")
-
+        # 1. Setup and Loading
         config = request.get_json()
-        logging.info(f"Received experiment config: {config}")
+        dataset_filename = config.get('dataset_filename')
+        
+        if dataset_filename:
+             upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+             filepath = os.path.join(upload_folder, secure_filename(dataset_filename))
+             if not os.path.exists(filepath):
+                 design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+                 filepath = os.path.join(design_space_dir, secure_filename(dataset_filename))
+        else:
+             filepath = session.get('filepath')
 
+        if not filepath or not os.path.exists(filepath):
+            logging.error(f"Filepath not found: {filepath}")
+            return jsonify({'success': False, 'error': 'Please upload or select a dataset first.'})
+
+        data = pd.read_csv(filepath)
+        # Ensure row number exists for history plotting
+        if 'Row number' not in data.columns:
+            data['Row number'] = range(1, len(data) + 1)
+        
         model_name = config.get('model')
         curiosity = float(config.get('curiosity', 0.5))
         input_columns = config.get('input_columns')
         target_columns_config = config.get('target_columns')
-
+        
         target_columns = [t['name'] for t in target_columns_config]
         weights = np.array([float(t['weight']) for t in target_columns_config])
         max_or_min = [t['optimization'] for t in target_columns_config]
+        
+        results_df = pd.DataFrame()
 
-    # ---- Model Execution ----
-        if model_name == 'maml':
-            model = MAMLModel(input_size=len(input_columns), output_size=len(target_columns))
-            results_df = evaluate_maml(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'reptile':
-            model = ReptileModel(input_size=len(input_columns), output_size=len(target_columns))
-            model, _, _ = reptile_train(model, data, input_columns, target_columns, 50, 0.001, 5, 16)
-            results_df = evaluate_reptile(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'protonet':
-            model = ProtoNetModel(input_size=len(input_columns), output_size=len(target_columns))
-            model, _, _ = protonet_train(model, data, input_columns, target_columns, 50, 0.001, 5, 5, 5)
-            results_df = evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'rf':
-            model, _, _ = train_rf_model(data, input_columns, target_columns)
-            results_df = evaluate_rf_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'pinn':
-            model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
-            model, _, _ = pinn_train(model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
-            results_df = evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'gp':
-            # Gaussian Process Regressor: The BO classic
-            model, _, _ = train_gp_model(data, input_columns, target_columns)
-            results_df = evaluate_gp_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        elif model_name == 'lolopy':
-            model, _, _ = train_lolopy_model(data, input_columns, target_columns)
-            results_df = evaluate_lolopy_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        # 2. Model Execution
+        config_entry = MODEL_CONFIG.get(model_name)
+        input_size = len(input_columns)
+        output_size = len(target_columns)
 
-        elif model_name == 'dkl':
-            # Deep Kernel Learning (DKL): GP + NN Feature Extraction (SOTA for structured uncertainty)
-            model, _, _ = train_dkl_model(data, input_columns, target_columns)
-            results_df = evaluate_dkl_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+        if config_entry:
+            if model_name in ['maml', 'reptile', 'protonet', 'pinn']:
+                model = config_entry['model_class'](input_size=input_size, output_size=output_size)
+            else:
+                model = None
+
+            if 'train_func' in config_entry:
+                train_func = config_entry['train_func']
+                train_params = config_entry.get('train_params')
+                if train_params is not None:
+                    model, _, _ = train_func(model, data, input_columns, target_columns, *train_params)
+                else:
+                    model, _, _ = train_func(data, input_columns, target_columns)
+
+            evaluate_func = config_entry['evaluate_func']
+            results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+
         elif model_name == 'ensemble':
-            pinn_model = PINNModel(input_size=len(input_columns), output_size=len(target_columns))
+            pinn_model = PINNModel(input_size=input_size, output_size=output_size)
             pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(pinn_model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
             rf_model, rf_scaler_x, rf_scaler_y = train_rf_model(data, input_columns, target_columns)
             models = {'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y), 'rf': (rf_model, rf_scaler_x, rf_scaler_y)}
             results_df, _ = weighted_uncertainty_ensemble(models, data, input_columns, target_columns, curiosity, weights, max_or_min)
-        else:
-            results_df = pd.DataFrame()
 
-        logging.info(f"Results DataFrame shape after model evaluation: {results_df.shape}")
+        # 3. Safety Checks and Post-Processing
+        if results_df.empty:
+             return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
 
-        # ---- Build Visualization ----
-        # Prepare data for t-SNE plot
+        # Utility Calculation Fallback
+        if 'Utility' not in results_df.columns or results_df['Utility'].isnull().all():
+             optimizer = BayesianOptimizer(data[input_columns].values, data[target_columns].values, target_columns_config)
+             pred_col = 'prediction' if 'prediction' in results_df.columns else target_columns[0]
+             unc_col = 'uncertainty' if 'uncertainty' in results_df.columns else 'Uncertainty'
+             
+             # Construct temp arrays for calculation
+             if pred_col in results_df.columns:
+                 preds = results_df[pred_col].values.reshape(-1, 1)
+             else:
+                 preds = np.zeros((len(results_df), 1))
+                 
+             if unc_col in results_df.columns:
+                 uncs = results_df[unc_col].values.reshape(-1, 1)
+             else:
+                 uncs = np.ones((len(results_df), 1)) * 0.1
+
+             utility = optimizer.calculate_utility(preds, uncs, curiosity)
+             results_df['Utility'] = utility.flatten()
+
+        results_df['Utility'] = pd.to_numeric(results_df['Utility'], errors='coerce').fillna(0.0)
+
+        # Uncertainty Fallback
+        if 'uncertainty' in results_df.columns:
+            results_df['Uncertainty'] = results_df['uncertainty']
+        
+        if 'Uncertainty' not in results_df.columns or results_df['Uncertainty'].max() < 1e-6:
+             results_df['Uncertainty'] = results_df['Utility'].abs() * 0.2 + 0.01
+
+        # 4. Generate Visualization Data
+        
+        # A. Prepare TSNE dataframe (Full Data)
+# Replace the visualization section (after TSNE calculation) with this optimized version
+
+        # 4. Generate Visualization Data (OPTIMIZED)
+        
+        print("📊 Starting visualization generation...")
+        
+        # A. Prepare TSNE dataframe
         tsne_df = data.copy()
+        
+        if 'Row number' not in tsne_df.columns:
+            tsne_df['Row number'] = range(1, len(tsne_df) + 1)
+        
         tsne_df["is_train_data"] = ~tsne_df[target_columns].isnull().any(axis=1)
-
-        # Merge results to get Utility scores
-        if "Utility" in results_df.columns:
-            tsne_df = tsne_df.merge(results_df[['Utility']], left_index=True, right_index=True, how='left')
-            tsne_df["Utility"] = tsne_df["Utility"].fillna(0)
+        
+        print(f"📊 TSNE Preparation:")
+        print(f"   Total samples: {len(tsne_df)}")
+        print(f"   Training samples: {tsne_df['is_train_data'].sum()}")
+        print(f"   Test/Unknown samples: {(~tsne_df['is_train_data']).sum()}")
+        
+        # Run TSNE
+        tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns)
+        
+        # Merge Utility/Uncertainty from results
+        cols_to_merge = ['Utility', 'Uncertainty']
+        common_indices = tsne_df.index.intersection(results_df.index)
+        
+        for col in cols_to_merge:
+            if col in results_df.columns:
+                tsne_df.loc[common_indices, col] = results_df.loc[common_indices, col]
+        
+        # OPTIMIZATION: Downsample for plotting if dataset is very large
+        MAX_PLOT_POINTS = 2000
+        
+        if len(tsne_df) > MAX_PLOT_POINTS:
+            print(f"⚡ Downsampling TSNE plot from {len(tsne_df)} to {MAX_PLOT_POINTS} points for performance...")
+            # Stratified sampling: keep all training data + sample test data
+            train_mask = tsne_df['is_train_data']
+            train_df = tsne_df[train_mask]
+            test_df = tsne_df[~train_mask]
+            
+            n_test_sample = MAX_PLOT_POINTS - len(train_df)
+            if n_test_sample > 0 and len(test_df) > n_test_sample:
+                test_sample = test_df.sample(n=n_test_sample, random_state=42)
+                tsne_plot_df = pd.concat([train_df, test_sample])
+            else:
+                tsne_plot_df = tsne_df
         else:
-            tsne_df["Utility"] = 0.0
+            tsne_plot_df = tsne_df
+        
+        print(f"📈 Generating TSNE plot with {len(tsne_plot_df)} points...")
+        tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_plot_df, input_columns)
+        print("✅ TSNE plot generated")
 
-        logging.info(f"t-SNE DataFrame shape: {tsne_df.shape}")
+        # B. Target Scatter (use results_df, which is typically smaller)
+        print(f"📈 Generating target scatter plot...")
+        target_scatter_figure = PlotGenerator.create_target_scatter_plot(results_df, target_columns)
+        print("✅ Target scatter plot generated")
 
-        tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_df, input_columns)
+        # C. Uncertainty plot
+        print(f"📈 Generating uncertainty plot...")
+        uncertainty_plot = PlotGenerator.create_uncertainty_plot(results_df, target_columns)
+        print("✅ Uncertainty plot generated")
 
-        # Prepare data for scatter plot
-        scatter_df = results_df.copy()
-        scatter_df["is_train_data"] = False  # All results are suggestions
+        # D. History plot (use full data but only non-null targets)
+        print(f"📈 Generating optimization history...")
+        history_plot = PlotGenerator.create_optimization_history_plot(data, target_columns)
+        print("✅ History plot generated")
+        
+        # E. Utility Surface - Use MUCH smaller sample for contour
+        print(f"📈 Generating utility surface...")
+        SURFACE_MAX_POINTS = 500  # Contour plots are VERY expensive, use fewer points
+        
+        if len(results_df) > SURFACE_MAX_POINTS:
+            print(f"⚡ Downsampling surface plot from {len(results_df)} to {SURFACE_MAX_POINTS} points...")
+            surface_df = results_df.sample(n=SURFACE_MAX_POINTS, random_state=42)
+        else:
+            surface_df = results_df
+            
+        # Transfer TSNE coords to surface_df
+        if 'tsne-2d-one' in tsne_df.columns and 'tsne-2d-two' in tsne_df.columns:
+            surface_df = surface_df.copy()  # Avoid SettingWithCopyWarning
+            surface_df['tsne-2d-one'] = tsne_df.loc[surface_df.index, 'tsne-2d-one']
+            surface_df['tsne-2d-two'] = tsne_df.loc[surface_df.index, 'tsne-2d-two']
+        
+        utility_surface_plot = PlotGenerator.create_utility_surface_plot(surface_df, input_columns)
+        print("✅ Utility surface plot generated")
 
-        logging.info(f"Scatter DataFrame shape: {scatter_df.shape}")
+        # F. Prediction error (placeholder)
+        prediction_error_plot = {'data': [], 'layout': {'title': 'Error Plot N/A'}}
 
-        target_scatter_figure = PlotGenerator.create_target_scatter_plot(scatter_df, target_columns)
+        # OPTIMIZATION: Use smaller HTML table for display
+        print(f"📊 Preparing results table...")
+        if len(results_df) > 500:
+            # Show only top results by utility in the HTML preview
+            table_df = results_df.nlargest(500, 'Utility')
+            table_html = table_df.to_html(classes="table table-striped", index=False)
+            table_html += f'<p class="text-muted"><em>Showing top 500 of {len(results_df)} results by Utility. Download full results using the buttons above.</em></p>'
+        else:
+            table_html = results_df.to_html(classes="table table-striped", index=False)
+        
+        print("✅ Results table prepared")
+        
+        print("🎉 All visualizations complete!")
+        
+        # DEBUG: Check response size before sending
+        import sys
+        print(f"📊 Response object sizes:")
+        print(f"   TSNE figure: {sys.getsizeof(tsne_figure) / 1024:.1f} KB")
+        print(f"   Scatter figure: {sys.getsizeof(target_scatter_figure) / 1024:.1f} KB")
+        print(f"   Table HTML: {len(table_html) / 1024:.1f} KB")
 
         response_data = {
             "success": True,
-            "results_table": results_df.to_html(classes="table table-striped", index=False),
+            "results_table": table_html,
             "tsne_figure": tsne_figure,
-            "target_scatter_figure": target_scatter_figure
+            "target_scatter_figure": target_scatter_figure,
+            "uncertainty_plot": uncertainty_plot,
+            "history_plot": history_plot, 
+            "utility_surface_plot": utility_surface_plot,
+            "prediction_error_plot": prediction_error_plot
         }
 
-        # ---- Return to Frontend ----
-        logging.info("Experiment completed successfully")
-        return jsonify(response_data)
+        print("📤 Sending response to client...")
+        
+        # Try to create response with error handling
+        try:
+            from flask import jsonify
+            response = jsonify(response_data)
+            print(f"✅ JSON response created successfully (size: {len(response.get_data()) / 1024:.1f} KB)")
+            return response
+        except Exception as json_error:
+            print(f"❌ JSON serialization error: {json_error}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return a minimal error response
+            return jsonify({
+                'success': False, 
+                'error': f'Failed to serialize response: {str(json_error)}'
+            }), 500
 
     except Exception as e:
         logging.exception("An error occurred in /run-experiment")

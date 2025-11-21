@@ -1,5 +1,5 @@
 // ==========================================================
-//  DASHBOARD.JS — FINAL VERSION WITH DATASET SELECTION AND HELP FEATURES
+//  DASHBOARD.JS — FINAL VERSION WITH ACTIVE LEARNING PLOTS
 // ==========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -13,7 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const targetContainer = document.getElementById("target-properties-container");
 
     const modelSelect = document.getElementById("model-select");
-    const modelHelpButton = document.getElementById("model-help-button"); // NEW: Reference to the help button
+    const modelHelpButton = document.getElementById("model-help-button"); 
     const curiositySlider = document.getElementById("curiosity-slider");
     const curiosityValueDisplay = document.getElementById("curiosity-value-display"); 
     const curiosityGuidanceText = document.getElementById("curiosity-guidance-text"); 
@@ -23,18 +23,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const resultsTableContainer = document.getElementById("results-table-container");
     const addTargetButton = document.getElementById("add-target-property-button");
 
+    // Existing Plot Divs
     const tsnePlotDiv = document.getElementById("tsne-plot");
     const scatterPlotDiv = document.getElementById("scatter-plot");
+    
+    // NEW Plot Divs
+    const uncertaintyPlotDiv = document.getElementById("uncertainty-plot");
+    const historyPlotDiv = document.getElementById("history-plot");
+    const utilitySurfacePlotDiv = document.getElementById("utility-surface-plot");
+    const utilitySurfaceMessage = document.getElementById("utility-surface-message");
 
 
     // ----- STATE VARIABLES -----
-    let allColumns = []; // Columns of the currently active dataset
-    let uploadedDatasets = []; // Array to store all uploaded datasets: {filename, columns, isActive}
+    let allColumns = []; 
+    let uploadedDatasets = []; 
     let experimentData = null;
-    let resultsDataTable = null; // Variable for DataTables instance
+    let resultsDataTable = null; 
 
-    // ----- MODEL DESCRIPTIONS -----
-    // NOTE: HTML is included for better formatting in the popover
+    // ----- MODEL DESCRIPTIONS (Keep as is) -----
     const MODEL_INFO = {
         'pinn': {
             name: 'Physics Informed Neural Network (PINN)',
@@ -85,7 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
     // ==========================================================
-    //  Utility helpers (Functions remain the same)
+    //  Utility helpers (Keep as is)
     // ==========================================================
     function createOption(value) {
         const opt = document.createElement("option");
@@ -110,10 +116,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  HELP FEATURE LOGIC (UPDATED FOR POPOVER)
+    //  HELP FEATURE LOGIC (Keep as is)
     // ==========================================================
     
-    // Function to update the Popover content
     function updateModelPopover(selectedValue) {
         const info = MODEL_INFO[selectedValue];
         const popover = bootstrap.Popover.getInstance(modelHelpButton);
@@ -125,13 +130,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     <p class="small text-danger mb-0"><strong>Warning:</strong> ${info.warning}</p>
                 </div>
             `;
-            // Update the popover title and content attributes
             modelHelpButton.setAttribute('data-bs-original-title', info.name);
             modelHelpButton.setAttribute('data-bs-content', content);
             
-            // Re-initialize or update if needed (Popovers handle updates internally when attributes change)
-            popover.dispose(); // Dispose the old instance
-            new bootstrap.Popover(modelHelpButton, { // Create a new one with updated data
+            popover.dispose(); 
+            new bootstrap.Popover(modelHelpButton, { 
                 html: true,
                 sanitize: false,
                 trigger: 'focus' 
@@ -139,23 +142,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    /**
-     * Shows the model information pop-up when a new model is selected.
-     */
     modelSelect.addEventListener("change", (event) => {
         const selectedValue = event.target.value;
         updateModelPopover(selectedValue);
-        // Automatically click the help button to show the popover on change
         modelHelpButton.click(); 
         modelHelpButton.focus();
     });
 
-    // Initialize the popover content for the default selected model on load
     updateModelPopover(modelSelect.value);
 
-    /**
-     * Provides dynamic guidance for the Curiosity slider.
-     */
     curiositySlider.addEventListener("input", () => {
         const value = parseFloat(curiositySlider.value);
         curiosityValueDisplay.textContent = value.toFixed(1);
@@ -173,12 +168,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
     
-    // Trigger initial guidance text on load
     curiositySlider.dispatchEvent(new Event('input'));
 
 
     // ==========================================================
-    //  DATASET MANAGEMENT (UPLOAD, SELECTION, DISPLAY) 
+    //  DATASET MANAGEMENT (Keep as is)
     // ==========================================================
 
     uploadButton.addEventListener("click", () => {
@@ -276,7 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  COLUMN SELECTORS 
+    //  COLUMN SELECTORS & TARGET PROPERTY GROUPS (Keep as is)
     // ==========================================================
 
     function populateInitialSelectors() {
@@ -304,10 +298,6 @@ document.addEventListener("DOMContentLoaded", () => {
             getSelected(aprioriColumns)
         );
     }
-
-    // ==========================================================
-    //  TARGET PROPERTY GROUPS 
-    // ==========================================================
 
     addTargetButton.addEventListener("click", () => addTargetGroup());
 
@@ -381,6 +371,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     runButton.addEventListener("click", runExperiment);
 
+    // Add this at the beginning of your runExperiment function
+
     function runExperiment() {
         const selectedInputs = getSelected(inputColumns);
         const targets = collectTargetConfig();
@@ -391,7 +383,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         const activeDataset = uploadedDatasets.find(d => d.isActive);
         if (!activeDataset) {
-             return alert("No dataset is currently selected. Please select one from the table.");
+            return alert("No dataset is currently selected. Please select one from the table.");
         }
 
         const payload = {
@@ -404,55 +396,176 @@ document.addEventListener("DOMContentLoaded", () => {
 
         console.log("🚀 Sending experiment request:", payload);
 
+        // === IMPROVED LOADING INDICATOR ===
+        runButton.disabled = true;
+        runButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+        
+        // Show detailed progress
+        resultsSection.style.display = "block";
+        resultsTableContainer.innerHTML = `
+            <div class="alert alert-info text-center">
+                <div class="spinner-border mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <h5 id="progress-title">Running Experiment...</h5>
+                <div class="progress mb-3" style="height: 25px;">
+                    <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                        role="progressbar" style="width: 100%">
+                        Processing...
+                    </div>
+                </div>
+                <p class="mb-2"><strong>Current Phase:</strong> <span id="progress-phase">Training model</span></p>
+                <small class="text-muted">Please wait, this may take 20-40 seconds for large datasets.</small>
+            </div>
+        `;
+
+        const startTime = Date.now();
+
         fetch("/run-experiment", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         })
-            .then(r => r.json())
-            .then(data => {
-                console.log("📦 Received response:", data);
+            .then(r => {
+                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`⏱️ Server responded in ${duration}s`);
                 
-                if (!data.success) {
-                    console.error("❌ Experiment error:", data.error);
-                    return alert("Error: " + data.error);
+                // Update progress
+                document.getElementById('progress-phase').textContent = 'Receiving data...';
+                
+                if (!r.ok) {
+                    throw new Error(`HTTP ${r.status}: ${r.statusText}`);
                 }
-
-                experimentData = data;
-                renderResults(data);
+                
+                return r.json();
+            })
+            .then(data => {
+                console.log("📦 Data received, size:", JSON.stringify(data).length, "characters");
+                
+                // Update progress
+                document.getElementById('progress-phase').textContent = 'Parsing response...';
+                
+                // Use setTimeout to allow UI to update before heavy processing
+                setTimeout(() => {
+                    processExperimentResults(data);
+                }, 100);
             })
             .catch(err => {
-                console.error("💥 Network error:", err);
-                alert("Network error — see console.");
+                console.error("💥 Error:", err);
+                runButton.disabled = false;
+                runButton.innerHTML = 'Run Experiment';
+                resultsTableContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>Network Error:</strong> ${err.message}<br>
+                        <small>Check the browser console and Flask terminal for details.</small>
+                    </div>
+                `;
             });
     }
 
-    // ==========================================================
-    //  RENDER RESULTS + PLOTS 
-    // ==========================================================
-
-    function renderResults(data) {
-        console.log("🎨 Rendering results...");
+    // SEPARATE FUNCTION: Process results without blocking UI
+    function processExperimentResults(data) {
+        console.log("🎨 Starting to render results...");
         
-        resultsSection.style.display = "block";
+        try {
+            // Re-enable button first
+            runButton.disabled = false;
+            runButton.innerHTML = 'Run Experiment';
+            
+            if (!data.success) {
+                console.error("❌ Experiment error:", data.error);
+                resultsTableContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>Error:</strong> ${data.error}
+                    </div>
+                `;
+                return;
+            }
 
+            experimentData = data;
+            
+            // Update progress
+            document.getElementById('progress-title').textContent = 'Rendering visualizations...';
+            document.getElementById('progress-phase').textContent = 'Creating plots...';
+            
+            // Render in stages to prevent UI freeze
+            renderResultsProgressively(data);
+            
+        } catch (err) {
+            console.error("💥 Error processing results:", err);
+            resultsTableContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <strong>Processing Error:</strong> ${err.message}
+                </div>
+            `;
+        }
+    }
+
+    // PROGRESSIVE RENDERING: Render one plot at a time with longer delays
+    function renderResultsProgressively(data) {
+        console.log("📊 Progressive rendering started");
+        
+        // Stage 1: Show results section
+        resultsSection.style.display = "block";
+        
+        // Stage 2: Render table (fastest)
+        setTimeout(() => {
+            console.log("📊 Rendering table...");
+            renderTable(data.results_table);
+            
+            // Stage 3: Render scatter plot (small, fast)
+            setTimeout(() => {
+                console.log("📊 Rendering scatter plot...");
+                drawPlot("scatter-plot", data.target_scatter_figure);
+                
+                // Stage 4: Render TSNE plot (medium, 2000 points)
+                setTimeout(() => {
+                    console.log("📊 Rendering TSNE plot...");
+                    drawPlot("tsne-plot", data.tsne_figure);
+                    
+                    // Stage 5: Render remaining plots (give more time)
+                    setTimeout(() => {
+                        console.log("📊 Rendering uncertainty plot...");
+                        drawPlot("uncertainty-plot", data.uncertainty_plot);
+                        
+                        setTimeout(() => {
+                            console.log("📊 Rendering history plot...");
+                            drawPlot("history-plot", data.history_plot);
+                            
+                            setTimeout(() => {
+                                console.log("📊 Rendering utility surface plot...");
+                                drawPlot("utility-surface-plot", data.utility_surface_plot);
+                                
+                                if (data.prediction_error_plot) {
+                                    setTimeout(() => {
+                                        drawPlot("prediction-error-plot", data.prediction_error_plot);
+                                        console.log("✅ All plots rendered!");
+                                    }, 200);
+                                } else {
+                                    console.log("✅ All plots rendered!");
+                                }
+                            }, 300);  // Longer delay for utility surface
+                        }, 200);
+                    }, 200);
+                }, 200);
+            }, 150);
+        }, 100);
+    }
+
+    // RENDER TABLE SEPARATELY
+    function renderTable(tableHtml) {
         if (resultsDataTable) {
             resultsDataTable.destroy();
             resultsDataTable = null;
-            resultsTableContainer.innerHTML = '';
-            console.log("ℹ️ Previous DataTable instance destroyed.");
         }
-
-        resultsTableContainer.innerHTML = data.results_table; 
         
-        const newTable = resultsTableContainer.querySelector("table"); 
+        resultsTableContainer.innerHTML = tableHtml;
         
+        const newTable = resultsTableContainer.querySelector("table");
         if (newTable) {
             if (!newTable.classList.contains('table')) {
                 newTable.classList.add('table', 'table-striped', 'w-100');
             }
-            
-            console.log("Initializing DataTable on the results table...");
             
             resultsDataTable = new DataTable(newTable, {
                 paging: true,
@@ -460,121 +573,95 @@ document.addEventListener("DOMContentLoaded", () => {
                 ordering: true,
                 info: true,
                 responsive: true,
-                dom: 'lfrtipB', 
+                deferRender: true,  // Performance optimization
+                dom: 'lfrtipB',
                 buttons: [
                     {
                         extend: 'csv',
                         text: '<i class="bi bi-file-earmark-arrow-down"></i> Download CSV',
-                        className: 'btn-sm btn-primary ms-2', 
-                        exportOptions: {
-                            modifier: {
-                                page: 'current' 
-                            }
-                        }
+                        className: 'btn-sm btn-primary ms-2'
                     },
                     {
                         extend: 'excel',
                         text: '<i class="bi bi-file-earmark-excel"></i> Download Excel',
-                        className: 'btn-sm btn-success ms-2', 
-                        exportOptions: {
-                            modifier: {
-                                page: 'current'
-                            }
-                        }
+                        className: 'btn-sm btn-success ms-2'
                     }
                 ]
             });
-            console.log("✅ DataTable initialized successfully.");
-        } else {
-            console.warn("Table element not found inside resultsTableContainer.");
-        }
-        
-        drawTSNE(data.tsne_figure);
-        drawScatter(data.target_scatter_figure);
-        if (data.prediction_error_plot) {
-            drawPredictionError(data.prediction_error_plot);
+            console.log("✅ DataTable initialized");
         }
     }
 
-    function drawPredictionError(fig) {
-        console.log("📊 Drawing prediction error plot...");
-        const predErrorPlotDiv = document.getElementById("prediction-error-plot");
+    // GENERIC PLOT HELPER (unchanged)
+    function drawPlot(divId, figData) {
+        const div = document.getElementById(divId);
+        if (!div) {
+            console.warn(`⚠️ Plot div not found: ${divId}`);
+            return;
+        }
 
-        try {
-            if (window.Plotly) Plotly.purge(predErrorPlotDiv); 
-            if (typeof fig === "string") fig = JSON.parse(fig);
+        // Clean up previous plot
+        if (window.Plotly) {
+            Plotly.purge(div);
+        }
 
-            if (!fig || !fig.data || fig.data.length === 0) {
-                predErrorPlotDiv.innerHTML = 
-                    "<div class='alert alert-warning'>Empty Prediction Error plot.</div>";
+        // Handle empty data
+        if (!figData || !figData.data || figData.data.length === 0) {
+            if (divId === 'utility-surface-plot') {
+                const msg = document.getElementById("utility-surface-message");
+                if (msg) msg.style.display = 'block';
+            } else {
+                div.innerHTML = `<div class='alert alert-warning d-flex align-items-center justify-content-center' style='height:100%'>No data available</div>`;
+            }
+            return;
+        }
+
+        // Handle string input (legacy)
+        let plotData = figData;
+        if (typeof figData === 'string') {
+            try {
+                plotData = JSON.parse(figData);
+            } catch (e) {
+                console.error(`Failed to parse JSON for ${divId}:`, e);
                 return;
             }
-
-            Plotly.newPlot(predErrorPlotDiv, fig.data, fig.layout, {responsive: true});
-            
-        } catch (err) {
-            console.error("💥 Prediction Error plotting error:", err);
-            predErrorPlotDiv.innerHTML = 
-                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
         }
-    }
 
-    function drawTSNE(fig) {
-        console.log("📊 Drawing t-SNE plot...");
-        
+        console.log(`📈 Drawing ${divId}...`);
+
         try {
-            if (window.Plotly) Plotly.purge(tsnePlotDiv); 
-            if (typeof fig === "string") fig = JSON.parse(fig);
-
-            if (!fig || !fig.data || fig.data.length === 0) {
-                tsnePlotDiv.innerHTML = 
-                    "<div class='alert alert-warning'>Empty t-SNE figure.</div>";
-                return;
-            }
-
-            Plotly.newPlot(tsnePlotDiv, fig.data, fig.layout, {responsive: true});
+            Plotly.newPlot(div, plotData.data, plotData.layout, {
+                responsive: true,
+                displayModeBar: true
+            });
             
-        } catch (err) {
-            console.error("💥 t-SNE plotting error:", err);
-            tsnePlotDiv.innerHTML = 
-                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
-        }
-    }
-
-    function drawScatter(fig) {
-        console.log("📊 Drawing scatter plot...");
-        
-        try {
-            if (window.Plotly) Plotly.purge(scatterPlotDiv); 
-            if (typeof fig === "string") fig = JSON.parse(fig);
-
-            if (!fig || !fig.data || fig.data.length === 0) {
-                scatterPlotDiv.innerHTML = 
-                    "<div class='alert alert-warning'>Empty scatter plot.</div>";
-                return;
+            if (divId === 'utility-surface-plot') {
+                const msg = document.getElementById("utility-surface-message");
+                if (msg) msg.style.display = 'none';
             }
-
-            Plotly.newPlot(scatterPlotDiv, fig.data, fig.layout, {responsive: true});
             
-        } catch (err) {
-            console.error("💥 Scatter plotting error:", err);
-            scatterPlotDiv.innerHTML = 
-                `<div class='alert alert-danger'>Error: ${err.message}</div>`;
-        }
-    }
+            console.log(`✅ ${divId} drawn successfully`);
 
+        } catch (err) {
+            console.error(`💥 Error drawing ${divId}:`, err);
+            div.innerHTML = `<div class='alert alert-danger'>Plot Error: ${err.message}</div>`;
+        }
+}
 
     // ==========================================================
     //  RESPONSIVE RESIZING
     // ==========================================================
 
     window.addEventListener("resize", () => {
-        if (tsnePlotDiv && tsnePlotDiv.data) {
-            Plotly.Plots.resize(tsnePlotDiv);
-        }
-        if (scatterPlotDiv && scatterPlotDiv.data) {
-            Plotly.Plots.resize(scatterPlotDiv);
-        }
+        const plots = ["tsne-plot", "scatter-plot", "uncertainty-plot", "history-plot", "utility-surface-plot", "prediction-error-plot"];
+        
+        plots.forEach(id => {
+            const div = document.getElementById(id);
+            if (div && div.data) {
+                Plotly.Plots.resize(div);
+            }
+        });
+
         if (resultsDataTable) {
              resultsDataTable.columns.adjust().draw();
         }
