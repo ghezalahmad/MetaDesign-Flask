@@ -365,18 +365,21 @@ def run_experiment():
         if 'Uncertainty' not in results_df.columns or results_df['Uncertainty'].max() < 1e-6:
              results_df['Uncertainty'] = results_df['Utility'].abs() * 0.2 + 0.01
 
-        # CRITICAL: Normalize Utility to [-1, 1] range BEFORE any plotting (SLAMD approach)
-        utility_min = results_df['Utility'].min()
-        utility_max = results_df['Utility'].max()
+        # SLAMD APPROACH: Utility is already normalized by the model
+        # But we need to ensure it's in a reasonable range for visualization
+        # SLAMD uses z-score normalization (mean=0, std=1), then clips to reasonable bounds
         
-        if utility_max > utility_min:
-            # Store original utility for reference
-            results_df['Utility_Original'] = results_df['Utility']
-            # Normalize to [-1, 1] range
-            results_df['Utility'] = 2 * (results_df['Utility'] - utility_min) / (utility_max - utility_min) - 1
-            print(f"✅ Utility normalized from [{utility_min:.2f}, {utility_max:.2f}] to [-1, 1]")
-        else:
-            results_df['Utility'] = 0.0
+        # Normalize utility using z-score if values are too large
+        utility_mean = results_df['Utility'].mean()
+        utility_std = results_df['Utility'].std()
+        
+        if utility_std > 0 and (results_df['Utility'].abs().max() > 10):
+            # If utility values are outside typical range, normalize them
+            results_df['Utility'] = (results_df['Utility'] - utility_mean) / utility_std
+            print(f"✅ Utility z-score normalized (mean={utility_mean:.2f}, std={utility_std:.2f})")
+        
+        # Round to 6 decimal places like SLAMD
+        results_df['Utility'] = results_df['Utility'].round(6)
 
         # 4. Generate Visualizations (OPTIMIZED)
         print("📊 Starting visualization generation...")
