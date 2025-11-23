@@ -10,8 +10,6 @@ from flask import (
     session, redirect, url_for, send_from_directory
 )
 from werkzeug.utils import secure_filename
-# Remove explicit TSNE import here as it's handled in PlotGenerator
-# from sklearn.manifold import TSNE
 
 from app.models.models import MAMLModel, evaluate_maml, meta_train
 from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
@@ -294,7 +292,6 @@ def run_experiment():
             return jsonify({'success': False, 'error': 'Please upload or select a dataset first.'})
 
         data = pd.read_csv(filepath)
-        # Ensure row number exists for history plotting
         if 'Row number' not in data.columns:
             data['Row number'] = range(1, len(data) + 1)
         
@@ -338,17 +335,15 @@ def run_experiment():
             models = {'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y), 'rf': (rf_model, rf_scaler_x, rf_scaler_y)}
             results_df, _ = weighted_uncertainty_ensemble(models, data, input_columns, target_columns, curiosity, weights, max_or_min)
 
-        # 3. Safety Checks and Post-Processing
+        # 3. Safety Checks
         if results_df.empty:
              return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
 
-        # Utility Calculation Fallback
         if 'Utility' not in results_df.columns or results_df['Utility'].isnull().all():
              optimizer = BayesianOptimizer(data[input_columns].values, data[target_columns].values, target_columns_config)
              pred_col = 'prediction' if 'prediction' in results_df.columns else target_columns[0]
              unc_col = 'uncertainty' if 'uncertainty' in results_df.columns else 'Uncertainty'
              
-             # Construct temp arrays for calculation
              if pred_col in results_df.columns:
                  preds = results_df[pred_col].values.reshape(-1, 1)
              else:
@@ -364,23 +359,28 @@ def run_experiment():
 
         results_df['Utility'] = pd.to_numeric(results_df['Utility'], errors='coerce').fillna(0.0)
 
-        # Uncertainty Fallback
         if 'uncertainty' in results_df.columns:
             results_df['Uncertainty'] = results_df['uncertainty']
         
         if 'Uncertainty' not in results_df.columns or results_df['Uncertainty'].max() < 1e-6:
              results_df['Uncertainty'] = results_df['Utility'].abs() * 0.2 + 0.01
 
-        # 4. Generate Visualization Data
+        # CRITICAL: Normalize Utility to [-1, 1] range BEFORE any plotting (SLAMD approach)
+        utility_min = results_df['Utility'].min()
+        utility_max = results_df['Utility'].max()
         
-        # A. Prepare TSNE dataframe (Full Data)
-# Replace the visualization section (after TSNE calculation) with this optimized version
+        if utility_max > utility_min:
+            # Store original utility for reference
+            results_df['Utility_Original'] = results_df['Utility']
+            # Normalize to [-1, 1] range
+            results_df['Utility'] = 2 * (results_df['Utility'] - utility_min) / (utility_max - utility_min) - 1
+            print(f"✅ Utility normalized from [{utility_min:.2f}, {utility_max:.2f}] to [-1, 1]")
+        else:
+            results_df['Utility'] = 0.0
 
-        # 4. Generate Visualization Data (OPTIMIZED)
-        
+        # 4. Generate Visualizations (OPTIMIZED)
         print("📊 Starting visualization generation...")
         
-        # A. Prepare TSNE dataframe
         tsne_df = data.copy()
         
         if 'Row number' not in tsne_df.columns:
@@ -390,34 +390,29 @@ def run_experiment():
         
         print(f"📊 TSNE Preparation:")
         print(f"   Total samples: {len(tsne_df)}")
-        print(f"   Training samples: {tsne_df['is_train_data'].sum()}")
-        print(f"   Test/Unknown samples: {(~tsne_df['is_train_data']).sum()}")
+        print(f"   Training samples (labelled): {tsne_df['is_train_data'].sum()}")
+        print(f"   Prediction samples (predicted): {(~tsne_df['is_train_data']).sum()}")
         
-        # Run TSNE
         tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns)
         
-        # Merge Utility/Uncertainty from results
         cols_to_merge = ['Utility', 'Uncertainty']
         common_indices = tsne_df.index.intersection(results_df.index)
         
         for col in cols_to_merge:
             if col in results_df.columns:
                 tsne_df.loc[common_indices, col] = results_df.loc[common_indices, col]
-        
-        # OPTIMIZATION: Downsample for plotting if dataset is very large
+
         MAX_PLOT_POINTS = 2000
-        
         if len(tsne_df) > MAX_PLOT_POINTS:
-            print(f"⚡ Downsampling TSNE plot from {len(tsne_df)} to {MAX_PLOT_POINTS} points for performance...")
-            # Stratified sampling: keep all training data + sample test data
+            print(f"⚡ Downsampling TSNE DISPLAY from {len(tsne_df)} to {MAX_PLOT_POINTS} points...")
             train_mask = tsne_df['is_train_data']
             train_df = tsne_df[train_mask]
-            test_df = tsne_df[~train_mask]
+            pred_df = tsne_df[~train_mask]
             
-            n_test_sample = MAX_PLOT_POINTS - len(train_df)
-            if n_test_sample > 0 and len(test_df) > n_test_sample:
-                test_sample = test_df.sample(n=n_test_sample, random_state=42)
-                tsne_plot_df = pd.concat([train_df, test_sample])
+            n_pred_sample = MAX_PLOT_POINTS - len(train_df)
+            if n_pred_sample > 0 and len(pred_df) > n_pred_sample:
+                pred_sample = pred_df.sample(n=n_pred_sample, random_state=42)
+                tsne_plot_df = pd.concat([train_df, pred_sample])
             else:
                 tsne_plot_df = tsne_df
         else:
@@ -427,24 +422,20 @@ def run_experiment():
         tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_plot_df, input_columns)
         print("✅ TSNE plot generated")
 
-        # B. Target Scatter (use results_df, which is typically smaller)
         print(f"📈 Generating target scatter plot...")
         target_scatter_figure = PlotGenerator.create_target_scatter_plot(results_df, target_columns)
         print("✅ Target scatter plot generated")
 
-        # C. Uncertainty plot
         print(f"📈 Generating uncertainty plot...")
         uncertainty_plot = PlotGenerator.create_uncertainty_plot(results_df, target_columns)
         print("✅ Uncertainty plot generated")
 
-        # D. History plot (use full data but only non-null targets)
         print(f"📈 Generating optimization history...")
         history_plot = PlotGenerator.create_optimization_history_plot(data, target_columns)
         print("✅ History plot generated")
         
-        # E. Utility Surface - Use MUCH smaller sample for contour
         print(f"📈 Generating utility surface...")
-        SURFACE_MAX_POINTS = 500  # Contour plots are VERY expensive, use fewer points
+        SURFACE_MAX_POINTS = 500
         
         if len(results_df) > SURFACE_MAX_POINTS:
             print(f"⚡ Downsampling surface plot from {len(results_df)} to {SURFACE_MAX_POINTS} points...")
@@ -452,22 +443,18 @@ def run_experiment():
         else:
             surface_df = results_df
             
-        # Transfer TSNE coords to surface_df
         if 'tsne-2d-one' in tsne_df.columns and 'tsne-2d-two' in tsne_df.columns:
-            surface_df = surface_df.copy()  # Avoid SettingWithCopyWarning
+            surface_df = surface_df.copy()
             surface_df['tsne-2d-one'] = tsne_df.loc[surface_df.index, 'tsne-2d-one']
             surface_df['tsne-2d-two'] = tsne_df.loc[surface_df.index, 'tsne-2d-two']
         
         utility_surface_plot = PlotGenerator.create_utility_surface_plot(surface_df, input_columns)
         print("✅ Utility surface plot generated")
 
-        # F. Prediction error (placeholder)
         prediction_error_plot = {'data': [], 'layout': {'title': 'Error Plot N/A'}}
 
-        # OPTIMIZATION: Use smaller HTML table for display
         print(f"📊 Preparing results table...")
         if len(results_df) > 500:
-            # Show only top results by utility in the HTML preview
             table_df = results_df.nlargest(500, 'Utility')
             table_html = table_df.to_html(classes="table table-striped", index=False)
             table_html += f'<p class="text-muted"><em>Showing top 500 of {len(results_df)} results by Utility. Download full results using the buttons above.</em></p>'
@@ -475,10 +462,8 @@ def run_experiment():
             table_html = results_df.to_html(classes="table table-striped", index=False)
         
         print("✅ Results table prepared")
-        
         print("🎉 All visualizations complete!")
-        
-        # DEBUG: Check response size before sending
+
         import sys
         print(f"📊 Response object sizes:")
         print(f"   TSNE figure: {sys.getsizeof(tsne_figure) / 1024:.1f} KB")
@@ -498,9 +483,7 @@ def run_experiment():
 
         print("📤 Sending response to client...")
         
-        # Try to create response with error handling
         try:
-            from flask import jsonify
             response = jsonify(response_data)
             print(f"✅ JSON response created successfully (size: {len(response.get_data()) / 1024:.1f} KB)")
             return response
@@ -509,7 +492,6 @@ def run_experiment():
             import traceback
             traceback.print_exc()
             
-            # Return a minimal error response
             return jsonify({
                 'success': False, 
                 'error': f'Failed to serialize response: {str(json_error)}'

@@ -1,18 +1,19 @@
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px  # ADDED for SLAMD-style plots
 from sklearn.manifold import TSNE
 
 class PlotGenerator:
 
     # ======================================================
-    #   TSNE CALCULATION (SLAMD-STYLE - FAST & RELIABLE)
+    #   TSNE CALCULATION (SLAMD-EXACT WITH NORMALIZATION)
     # ======================================================
     @classmethod
     def _run_tsne(cls, df: pd.DataFrame, input_columns):
         """
-        Calculate TSNE coordinates following SLAMD's approach.
-        Returns the dataframe with 'tsne-2d-one' and 'tsne-2d-two' columns added.
+        Calculate TSNE coordinates EXACTLY like SLAMD.
+        CRITICAL: SLAMD standardizes features before TSNE!
         """
         if df is None or df.empty:
             print("⚠️ TSNE: empty dataframe")
@@ -20,55 +21,56 @@ class PlotGenerator:
             
         df = df.copy()
         
-        # SLAMD APPROACH: Determine which columns to exclude from TSNE
+        # SLAMD APPROACH: Exclude specific columns, keep everything else
         exclude_columns = ['Row number', 'Utility', 'is_train_data', 'Uncertainty']
         
-        # Add target columns and uncertainty columns to exclusion list
+        # Also exclude any uncertainty columns
         exclude_columns.extend([col for col in df.columns if col.startswith('Uncertainty (')])
         
-        # Get features for TSNE: use input_columns if valid, otherwise all numeric columns
-        if input_columns:
-            valid_inputs = [c for c in input_columns 
-                          if c in df.columns 
-                          and pd.api.types.is_numeric_dtype(df[c])
-                          and c not in exclude_columns]
-        else:
-            valid_inputs = [c for c in df.columns 
-                          if pd.api.types.is_numeric_dtype(df[c]) 
-                          and c not in exclude_columns]
+        # Get all numeric columns that aren't excluded
+        feature_columns = [col for col in df.columns 
+                          if col not in exclude_columns 
+                          and pd.api.types.is_numeric_dtype(df[col])]
         
         # Need at least 1 feature and 3 samples for TSNE
-        if not valid_inputs or len(df) < 3:
-            print(f"⚠️ TSNE: Insufficient data (features={len(valid_inputs)}, samples={len(df)})")
+        if not feature_columns or len(df) < 3:
+            print(f"⚠️ TSNE: Insufficient data (features={len(feature_columns)}, samples={len(df)})")
             df['tsne-2d-one'] = 0.0
             df['tsne-2d-two'] = 0.0
             return df
         
-        print(f"✅ TSNE: Running on {len(valid_inputs)} features × {len(df)} samples")
-        print(f"   Features: {valid_inputs}")
+        print(f"✅ TSNE: Running on {len(feature_columns)} features × {len(df)} samples")
+        print(f"   Features: {feature_columns}")
         
         try:
-            # Prepare feature matrix (SLAMD style: clean subset only)
-            features = df[valid_inputs].fillna(0).astype(float)
+            # Prepare feature matrix
+            tsne_input_df = df[feature_columns].fillna(0).astype(float)
             
-            # SLAMD perplexity rule: must be less than number of samples
-            perplexity = min(20, len(features) - 1)
+            # CRITICAL: SLAMD STANDARDIZES DATA BEFORE TSNE
+            # This is why their clusters are so tight!
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            tsne_input_scaled = scaler.fit_transform(tsne_input_df.values)
             
-            # SLAMD TSNE parameters (proven to work well)
+            print(f"✅ TSNE: Data standardized (mean=0, std=1)")
+            
+            # SLAMD exact parameters
+            perplexity = min(20, len(df) - 1)
+            
             tsne = TSNE(
                 n_components=2,
+                verbose=1,
                 perplexity=perplexity,
-                max_iter=350,  # Updated parameter name (was n_iter)
+                max_iter=350,
                 random_state=42,
                 init='pca',
-                learning_rate=100,
-                verbose=1  # Show progress
+                learning_rate=100
             )
             
-            # Run TSNE
-            tsne_result = tsne.fit_transform(features.values)
+            # Run TSNE on STANDARDIZED data
+            tsne_result = tsne.fit_transform(tsne_input_scaled)
             
-            # Add results to dataframe
+            # Add results to dataframe (SLAMD naming)
             df['tsne-2d-one'] = tsne_result[:, 0]
             df['tsne-2d-two'] = tsne_result[:, 1]
             
