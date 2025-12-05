@@ -10,11 +10,13 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKern
 # Assuming these internal imports are correct for your setup
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.utils.utils import calculate_novelty
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 class FeatureExtractor(nn.Module):
     """The Deep Neural Network component for feature extraction."""
     def __init__(self, input_size, feature_dim, hidden_size=64):
-        # NOTE: feature_dim must match the number of output targets (output_size) for the MSE loss to work.
         super(FeatureExtractor, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_size, hidden_size),
@@ -33,172 +35,195 @@ class DKLModel:
     Implements Deep Kernel Learning (DKL) using a NN for feature extraction 
     and independent Gaussian Processes (GPs) on the features for multi-output targets.
     """
-    def __init__(self, input_size, output_size, hidden_size=64):
-        # FIX APPLIED HERE: The feature extractor output size must match the number of targets (output_size)
-        # because its output is used directly for the MSE loss calculation against Y_tensor.
-        self.feature_dim = output_size # Set feature dimension equal to the output size for training stability
-        self.feature_extractor = FeatureExtractor(input_size, self.feature_dim, hidden_size)
-        
-        self.gp_models = []
-        self.scaler_x = StandardScaler()
-        self.target_columns = []
-        self.is_trained = False
+    def __init__(self, input_size, output_size, hidden_size=64, alpha=1e-6):
         self.input_size = input_size
         self.output_size = output_size
+        self.feature_extractor = FeatureExtractor(input_size, output_size, hidden_size=hidden_size)
         
-        # Define the base kernel for the GP (RBF is common for DKL)
-        self.base_kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)) + WhiteKernel(noise_level=1e-10, noise_level_bounds=(1e-10, 1e-1))
+        # A list to hold one GP model for each target
+        self.gp_models = []
+        self.scaler_x = StandardScaler()
+        self.scaler_y = StandardScaler()
+        self.target_columns = []
+        self.is_trained = False
+        self.alpha = alpha
 
-    def _extract_features(self, X_scaled: np.ndarray) -> np.ndarray:
-        """Passes scaled data through the trained NN to get features."""
-        self.feature_extractor.eval()
-        X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
-        with torch.no_grad():
-            features = self.feature_extractor(X_tensor).numpy()
-        return features
+        # Default Kernel for GPs in feature space
+        self.base_kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)) + WhiteKernel(noise_level=alpha, noise_level_bounds=(1e-10, 1e-1))
 
-    def train(self, data, input_columns, target_columns, fe_epochs=50, fe_lr=0.001):
+    def train(self, X: pd.DataFrame, y: pd.DataFrame, epochs=100, lr=0.001):
         """
-        Trains the Feature Extractor NN and then fits the GPs on the extracted features.
+        Trains the DKL model. This involves training the feature extractor (NN)
+        and then fitting independent GPs on the extracted features.
+        
+        NOTE: In a true DKL implementation (e.g., GPyTorch), the NN and GP would be trained jointly.
+        Here, we use a simpler sequential approach for easier integration and stability.
         """
-        train_data = data.dropna(subset=target_columns)
-        self.target_columns = target_columns
-
-        if train_data.empty or len(train_data) < 2:
-            print("DKLModel: Insufficient training data. Skipping fit.")
-            self.is_trained = False
-            return
-
-        X = train_data[input_columns]
-        Y = train_data[target_columns]
-
-        # 1. Scale Inputs
-        X_scaled = self.scaler_x.fit_transform(X)
+        self.target_columns = y.columns.tolist()
         
-        # 2. Train Feature Extractor NN (using all targets combined for feature loss)
+        # 1. Prepare data (Scaling)
+        X_scaled = self.scaler_x.fit_transform(X.values)
+        y_scaled = self.scaler_y.fit_transform(y.values)
+        
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
-        Y_tensor = torch.tensor(Y.values, dtype=torch.float32)
+        y_tensor = torch.tensor(y_scaled, dtype=torch.float32)
+
+        # 2. Train Feature Extractor (NN)
+        logging.info("Training DKL Feature Extractor...")
+        optimizer = optim.Adam(self.feature_extractor.parameters(), lr=lr)
+        criterion = nn.MSELoss()
         
-        optimizer = optim.Adam(self.feature_extractor.parameters(), lr=fe_lr)
-        loss_fn = nn.MSELoss()
-        
-        self.feature_extractor.train()
-        for epoch in range(fe_epochs):
+        for epoch in range(epochs):
+            self.feature_extractor.train()
             optimizer.zero_grad()
-            # Predictions now match the Y_tensor size (self.output_size)
-            predictions = self.feature_extractor(X_tensor) 
-            loss = loss_fn(predictions, Y_tensor)
+            features = self.feature_extractor(X_tensor)
+            
+            # Use MSE between features and scaled targets as a proxy loss
+            loss = criterion(features, y_tensor)
             loss.backward()
             optimizer.step()
         
-        # 3. Extract Features for GP Training
-        # Note: The 'features' now have the size of self.output_size (e.g., 2), 
-        # which is sufficient to guide the GP if feature_dim == output_size.
-        features = self._extract_features(X_scaled)
+        logging.info(f"Feature Extractor Training Complete. Final MSE Loss: {loss.item():.4f}")
+
+        # 3. Extract Features and Train GPs
+        self.feature_extractor.eval()
+        with torch.no_grad():
+            X_features_np = self.feature_extractor(X_tensor).numpy()
         
-        # 4. Train Independent GPs on the Extracted Features
         self.gp_models = []
-        for i, col in enumerate(target_columns):
-            y_i = Y.iloc[:, i].values.reshape(-1, 1)
-            
+        for i in range(self.output_size):
             gp = GaussianProcessRegressor(
-                kernel=self.base_kernel,
-                alpha=1e-10,
-                n_restarts_optimizer=5,
+                kernel=self.base_kernel, 
+                alpha=self.alpha,
                 normalize_y=True,
                 random_state=42
             )
-            gp.fit(features, y_i)
+            # Fit the GP on the extracted features (X_features_np) and the i-th target (y_scaled[:, i])
+            gp.fit(X_features_np, y_scaled[:, i])
             self.gp_models.append(gp)
 
         self.is_trained = True
 
-    def predict(self, X_input: pd.DataFrame | np.ndarray):
-        """Generates mean predictions."""
-        mean_preds, _ = self.predict_with_uncertainty(X_input)
-        return mean_preds
-
-    def predict_with_uncertainty(self, X_input: pd.DataFrame | np.ndarray, input_columns=None, num_samples=None):
+    def predict_with_uncertainty(self, X_input: pd.DataFrame, input_columns=None, num_samples=None):
         """
-        Generates mean predictions and standard deviations for all targets.
+        Generates predictions and associated standard deviations (uncertainties).
+        
+        Args:
+            X_input: Input features as DataFrame
+            input_columns: Optional, for compatibility with other models
+            num_samples: Optional, for compatibility with other models (not used by DKL)
+        
+        Returns:
+            predictions_orig: (n_samples, n_targets)
+            uncertainties_orig: (n_samples, n_targets)
+            None: DKL doesn't provide posterior samples
         """
-        if not self.is_trained or not self.gp_models:
-            n = len(X_input)
-            out_targets = len(self.target_columns) if self.target_columns else self.output_size
-            return np.zeros((n, out_targets)), np.zeros((n, out_targets))
+        if not self.is_trained:
+            raise Exception("DKLModel not trained. Call train() first.")
 
-        # 1. Scale Input
-        X_processed = X_input.values if isinstance(X_input, pd.DataFrame) else X_input
-        X_scaled = self.scaler_x.transform(X_processed)
+        X_scaled = self.scaler_x.transform(X_input.values)
+        X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
         
-        # 2. Extract Features
-        features = self._extract_features(X_scaled)
-        
+        self.feature_extractor.eval()
+        with torch.no_grad():
+            X_features_np = self.feature_extractor(X_tensor).numpy()
+
         predictions = []
-        std_deviations = []
+        uncertainties = []
 
-        # 3. Predict using each independent GP
         for gp in self.gp_models:
-            mean_pred, std_dev = gp.predict(features, return_std=True)
-            predictions.append(mean_pred.reshape(-1, 1))
-            std_deviations.append(std_dev.reshape(-1, 1))
+            # Predict mean and std in the feature space
+            y_pred_scaled, sigma_scaled = gp.predict(X_features_np, return_std=True)
+            
+            predictions.append(y_pred_scaled)
+            # The uncertainty from the GP is the standard deviation (sigma)
+            uncertainties.append(sigma_scaled)
 
-        predictions_combined = np.hstack(predictions)
-        std_deviations_combined = np.hstack(std_deviations)
+        # 1. Stack and inverse transform predictions (means)
+        predictions_scaled = np.vstack(predictions).T
+        predictions_orig = self.scaler_y.inverse_transform(predictions_scaled)
+        
+        # 2. The uncertainty (sigma) from GP is on the *scaled* target space.
+        # To convert to the original space, we multiply by the standard deviation of the original targets (y).
+        # scaler_y.scale_ is the standard deviation used for scaling
+        uncertainties_scaled = np.vstack(uncertainties).T
+        # Broadcasting the scale factor: (N_samples, N_targets) * (N_targets,)
+        uncertainties_orig = uncertainties_scaled * self.scaler_y.scale_
+        
+        return predictions_orig, uncertainties_orig, None  # Add None for posterior samples
 
-        return predictions_combined, std_deviations_combined
+# =======================================================
+# Wrapper Functions for routes.py integration
+# =======================================================
 
-
-def train_dkl_model(data, input_columns, target_columns):
-    """Initializes and trains the DKL model."""
+def train_dkl_model(data: pd.DataFrame, input_columns: list[str], target_columns: list[str], model_params: dict = None):
+    """
+    Trains the DKL model.
+    """
+    if model_params is None:
+        model_params = {}
+    
+    train_data = data.dropna(subset=target_columns)
+    
+    if train_data.empty or len(train_data) < 2:
+        logging.warning("Insufficient clean data to train DKL model.")
+        # Return a dummy model or raise error, depending on desired application behavior
+        # Here we raise the error so the calling route handles it.
+        raise ValueError("Insufficient data for DKL training.")
+    
+    X = train_data[input_columns]
+    y = train_data[target_columns]
+    
     input_size = len(input_columns)
     output_size = len(target_columns)
-    model = DKLModel(input_size, output_size)
-    # Default training parameters for feature extractor
-    model.train(data, input_columns, target_columns, fe_epochs=100, fe_lr=0.005)
-    return model, model.scaler_x, None
 
-
-def evaluate_dkl_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
-    """Evaluates the DKL model on candidate samples using Bayesian Optimization."""
-
-    labeled_data = data.dropna(subset=target_columns)
-    candidate_df = data[data[target_columns[0]].isnull()].copy()
-
-    if candidate_df.empty:
-        return pd.DataFrame()
+    model = DKLModel(input_size=input_size, output_size=output_size, **model_params)
     
-    # Ensure model is trained
-    if not getattr(model, 'is_trained', False):
-        print("evaluate_dkl_model: Model untrained. Training now...")
-        # Use default training parameters if not trained
-        model.train(data, input_columns, target_columns, fe_epochs=100, fe_lr=0.005)
+    # Train the model (using default or passed parameters for DKL training)
+    # Note: DKL internal training parameters (epochs, lr) need to be part of model_params 
+    # if you want to customize them, otherwise defaults are used.
+    model.train(X, y)
+    
+    return model, None, None  # Return 3 values for consistency
 
 
+def evaluate_dkl_model(model: DKLModel, labeled_data: pd.DataFrame, candidate_inputs: pd.DataFrame, 
+                       input_columns: list[str], target_columns: list[str], 
+                       weights: list[float], max_or_min: list[str], curiosity: float) -> pd.DataFrame:
+    """
+    Uses the trained DKL model as a surrogate for Bayesian Optimization 
+    to evaluate and score candidate materials.
+    """
+    logging.info("Running Bayesian Optimization with DKL surrogate to score candidates.")
+    
+    # Extract training inputs and targets for BO context (needed for novelty and utility)
     train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns].values
-    candidate_inputs = candidate_df[input_columns]
+    train_targets = labeled_data[target_columns]
     
-    # 1. Run Bayesian Optimization to get Utility Scores
+    # 1. Calculate Utility Scores using BO
     utility_scores = multi_objective_bayesian_optimization(
         train_inputs=train_inputs,
         train_targets=train_targets,
         candidate_inputs=candidate_inputs,
-        weights=weights,
+        weights=np.array(weights),
         max_or_min=max_or_min,
         curiosity=curiosity,
-        acquisition="UCB",
+        acquisition="UCB", # UCB is typically best with NN-based models like DKL
         strategy="weighted_sum",
-        surrogate_model=model,
+        surrogate_model=model, # Pass the DKLModel instance
         input_columns=input_columns
     )
 
-    # 2. Get Predictions and Uncertainties
-    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
+    # 2. Get predictions and uncertainties from the DKL model
+    predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
+
+    # 3. Prepare the results DataFrame
+    candidate_df = candidate_inputs.copy()
     
-    # 3. Map Predictions and Uncertainties to columns
+    # Add prediction and uncertainty for each target
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
+        # Store individual target uncertainty
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
     # 4. Assign Utility Scores
@@ -208,29 +233,36 @@ def evaluate_dkl_model(model, data, input_columns, target_columns, curiosity, we
         utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
         n = min(len(utility_scores), len(candidate_df))
         if len(utility_scores) != len(candidate_df):
+            # Trim if BO returned an uneven number of scores
             candidate_df = candidate_df.iloc[:n].copy()
             utility_scores = utility_scores[:n]
         candidate_df["Utility"] = utility_scores
 
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
+    
+    # 5. Calculate Aggregate Uncertainty (Mean of all target uncertainties)
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # 5. Calculate Novelty
+    # 6. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 6. Exploration / Exploitation
+    # 7. Exploration / Exploitation
+    # Exploration: UCB's exploration term is already incorporated into Utility, 
+    # but we track uncertainty contribution separately.
     candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
+    # Exploitation: Mean predicted value of the primary target(s)
     candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
 
-    # 7. Selection Flag
+    # 8. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 8. Final Sort
+    # 9. Final sorting
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
+    
     return result_df

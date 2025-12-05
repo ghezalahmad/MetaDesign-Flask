@@ -52,7 +52,14 @@ class LolopyRFModel:
 
 
     def predict_with_uncertainty(self, X, input_columns=None, num_samples=None):
-        """Generates predictions and uncertainties from all trained models."""
+        """
+        Generates predictions and uncertainties from all trained models.
+        
+        Returns:
+            final_predictions: (n_samples, n_targets)
+            final_uncertainties: (n_samples, n_targets)
+            None: lolopy doesn't provide posterior samples
+        """
         if not self.is_trained:
             raise RuntimeError("Model has not been trained yet.")
 
@@ -75,7 +82,7 @@ class LolopyRFModel:
         final_predictions = np.hstack(all_predictions)
         final_uncertainties = np.hstack(all_uncertainties)
 
-        return final_predictions, final_uncertainties
+        return final_predictions, final_uncertainties, None
 
 def train_lolopy_model(data: pd.DataFrame, input_columns: list, target_columns: list, n_estimators: int = 100):
     """Trains a lolopy RandomForestRegressor model."""
@@ -135,7 +142,7 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     )
 
     # 4. Surrogate predictions and uncertainties
-    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
+    predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]

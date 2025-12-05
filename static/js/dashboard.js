@@ -1,5 +1,6 @@
 // ==========================================================
 //  DASHBOARD.JS — FINAL VERSION WITH ACTIVE LEARNING PLOTS
+//  + LOCALSTORAGE CACHING & RESTORE
 // ==========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -33,12 +34,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const utilitySurfacePlotDiv = document.getElementById("utility-surface-plot");
     const utilitySurfaceMessage = document.getElementById("utility-surface-message");
 
-
+    // ----- STATE VARIABLES -----
     // ----- STATE VARIABLES -----
     let allColumns = []; 
     let uploadedDatasets = []; 
     let experimentData = null;
     let resultsDataTable = null; 
+    let shapashData = null; // Store explainability data
 
     // ----- MODEL DESCRIPTIONS (Keep as is) -----
     const MODEL_INFO = {
@@ -89,7 +91,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
-
     // ==========================================================
     //  Utility helpers (Keep as is)
     // ==========================================================
@@ -118,7 +119,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================================
     //  HELP FEATURE LOGIC (Keep as is)
     // ==========================================================
-    
     function updateModelPopover(selectedValue) {
         const info = MODEL_INFO[selectedValue];
         const popover = bootstrap.Popover.getInstance(modelHelpButton);
@@ -169,7 +169,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     
     curiositySlider.dispatchEvent(new Event('input'));
-
 
     // ==========================================================
     //  DATASET MANAGEMENT (Keep as is)
@@ -330,7 +329,6 @@ document.addEventListener("DOMContentLoaded", () => {
              return;
         }
 
-
         wrapper.innerHTML = `
             <div class="input-group">
                 <select class="form-select" name="target_columns">
@@ -370,8 +368,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================================
 
     runButton.addEventListener("click", runExperiment);
-
-    // Add this at the beginning of your runExperiment function
 
     function runExperiment() {
         const selectedInputs = getSelected(inputColumns);
@@ -431,7 +427,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 console.log(`⏱️ Server responded in ${duration}s`);
                 
                 // Update progress
-                document.getElementById('progress-phase').textContent = 'Receiving data...';
+                const phaseEl = document.getElementById('progress-phase');
+                if (phaseEl) phaseEl.textContent = 'Receiving data...';
                 
                 if (!r.ok) {
                     throw new Error(`HTTP ${r.status}: ${r.statusText}`);
@@ -442,8 +439,8 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(data => {
                 console.log("📦 Data received, size:", JSON.stringify(data).length, "characters");
                 
-                // Update progress
-                document.getElementById('progress-phase').textContent = 'Parsing response...';
+                const phaseEl = document.getElementById('progress-phase');
+                if (phaseEl) phaseEl.textContent = 'Parsing response...';
                 
                 // Use setTimeout to allow UI to update before heavy processing
                 setTimeout(() => {
@@ -468,40 +465,42 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("🎨 Starting to render results...");
         
         try {
-            // Re-enable button first
+            // Reset button UI
             runButton.disabled = false;
             runButton.innerHTML = 'Run Experiment';
             
             if (!data.success) {
-                console.error("❌ Experiment error:", data.error);
-                resultsTableContainer.innerHTML = `
-                    <div class="alert alert-danger">
-                        <strong>Error:</strong> ${data.error}
-                    </div>
-                `;
+                resultsTableContainer.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
                 return;
             }
 
+            // Store in global state
             experimentData = data;
+
+            // ✅ Also cache in localStorage so we can restore after navigation
+            try {
+                localStorage.setItem('metadesign_last_results', JSON.stringify(data));
+                console.log("💾 Cached experiment results to localStorage");
+            } catch (e) {
+                console.warn("⚠️ Could not cache results in localStorage:", e);
+            }
             
-            // Update progress
-            document.getElementById('progress-title').textContent = 'Rendering visualizations...';
-            document.getElementById('progress-phase').textContent = 'Creating plots...';
+            // Update progress text
+            const progressTitle = document.getElementById('progress-title');
+            const progressPhase = document.getElementById('progress-phase');
+            if (progressTitle) progressTitle.textContent = 'Rendering visualizations...';
+            if (progressPhase) progressPhase.textContent = 'Creating plots...';
             
-            // Render in stages to prevent UI freeze
+            // Render all plots and table
             renderResultsProgressively(data);
             
         } catch (err) {
             console.error("💥 Error processing results:", err);
-            resultsTableContainer.innerHTML = `
-                <div class="alert alert-danger">
-                    <strong>Processing Error:</strong> ${err.message}
-                </div>
-            `;
+            resultsTableContainer.innerHTML = `<div class="alert alert-danger"><strong>Processing Error:</strong> ${err.message}</div>`;
         }
     }
 
-    // PROGRESSIVE RENDERING: Render one plot at a time with longer delays
+    // PROGRESSIVE RENDERING: Render one plot at a time with delays
     function renderResultsProgressively(data) {
         console.log("📊 Progressive rendering started");
         
@@ -513,17 +512,17 @@ document.addEventListener("DOMContentLoaded", () => {
             console.log("📊 Rendering table...");
             renderTable(data.results_table);
             
-            // Stage 3: Render scatter plot (small, fast)
+            // Stage 3: Render scatter plot
             setTimeout(() => {
                 console.log("📊 Rendering scatter plot...");
                 drawPlot("scatter-plot", data.target_scatter_figure);
                 
-                // Stage 4: Render TSNE plot (medium, 2000 points)
+                // Stage 4: Render TSNE plot
                 setTimeout(() => {
                     console.log("📊 Rendering TSNE plot...");
                     drawPlot("tsne-plot", data.tsne_figure);
                     
-                    // Stage 5: Render remaining plots (give more time)
+                    // Stage 5: Render remaining plots
                     setTimeout(() => {
                         console.log("📊 Rendering uncertainty plot...");
                         drawPlot("uncertainty-plot", data.uncertainty_plot);
@@ -592,7 +591,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // GENERIC PLOT HELPER (unchanged)
+    // GENERIC PLOT HELPER (unchanged except logs)
     function drawPlot(divId, figData) {
         const div = document.getElementById(divId);
         if (!div) {
@@ -646,12 +645,43 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error(`💥 Error drawing ${divId}:`, err);
             div.innerHTML = `<div class='alert alert-danger'>Plot Error: ${err.message}</div>`;
         }
-}
+    }
+
+    // ==========================================================
+    //  RESTORE FROM LOCALSTORAGE ON DASHBOARD LOAD
+    // ==========================================================
+    function restoreLastResultsFromCache() {
+        try {
+            const cached = localStorage.getItem('metadesign_last_results');
+            if (!cached) {
+                console.log("ℹ️ No cached experiment results found.");
+                return;
+            }
+
+            const parsed = JSON.parse(cached);
+            if (!parsed || !parsed.success) {
+                console.log("ℹ️ Cached results invalid or unsuccessful.");
+                return;
+            }
+
+            console.log("♻️ Restoring experiment results from localStorage cache...");
+            experimentData = parsed;
+
+            // Make sure results section is visible
+            if (resultsSection) {
+                resultsSection.style.display = "block";
+            }
+
+            // Re-render everything from the cached data
+            renderResultsProgressively(parsed);
+        } catch (e) {
+            console.warn("⚠️ Failed to restore results from cache:", e);
+        }
+    }
 
     // ==========================================================
     //  RESPONSIVE RESIZING
     // ==========================================================
-
     window.addEventListener("resize", () => {
         const plots = ["tsne-plot", "scatter-plot", "uncertainty-plot", "history-plot", "utility-surface-plot", "prediction-error-plot"];
         
@@ -666,4 +696,7 @@ document.addEventListener("DOMContentLoaded", () => {
              resultsDataTable.columns.adjust().draw();
         }
     });
+
+    // ✅ Try to restore last results when the dashboard page loads
+    restoreLastResultsFromCache();
 });

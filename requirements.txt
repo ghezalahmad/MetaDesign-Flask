@@ -1,14 +1,13 @@
-numpy
-pandas
-torch
-scikit-learn
-scipy
-plotly
-scikit-optimize
-seaborn
-openai
-pytest
-pytest-cov
-playwright
-lolopy
-flask
+# Add these lines to your requirements.txt
+
+# Explainability
+shapash>=2.4.0
+shap>=0.44.0
+
+# Already required (ensure you have these)
+flask>=2.3.0
+flask-compress>=1.13
+pandas>=1.5.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+plotly>=5.15.0

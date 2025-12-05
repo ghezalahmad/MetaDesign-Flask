@@ -34,22 +34,31 @@ class PINNModel(nn.Module):
 
     def predict(self, X_input: pd.DataFrame | np.ndarray):
         """Generates predictions without uncertainty."""
-        mean_preds, _ = self.predict_with_uncertainty(X_input, num_samples=1)
+        mean_preds, _, _ = self.predict_with_uncertainty(X_input, num_samples=1)
         return mean_preds
 
     def predict_with_uncertainty(self, X_input: pd.DataFrame | np.ndarray, input_columns=None, num_samples=30, dropout_rate=None):
         """
         Generates predictions and uncertainties (Std Dev) using MC Dropout.
         dropout_rate is optional; uses the model's default if not provided.
+        
+        Returns:
+            mean_predictions_original: (n_samples, n_targets)
+            std_dev_original: (n_samples, n_targets)
+            predictions_scaled: (num_samples, n_samples, n_targets) - posterior samples
         """
         if not self.is_trained or self.scaler_x is None or self.scaler_y is None:
             # Handle case where model is not ready
             n = len(X_input)
             out_targets = self.scaler_y.scale_.shape[0] if hasattr(self.scaler_y, 'scale_') else 1
-            return np.zeros((n, out_targets)), np.zeros((n, out_targets))
+            return np.zeros((n, out_targets)), np.zeros((n, out_targets)), None
 
         # 1. Enable dropout during inference (MC Dropout)
         self.train()
+        
+        # Handle None value for num_samples
+        if num_samples is None:
+            num_samples = 30  # Default value
         
         rate = dropout_rate if dropout_rate is not None else self.default_dropout_rate
         for module in self.modules():
@@ -84,10 +93,16 @@ class PINNModel(nn.Module):
         # Var(k*X) = k^2 * Var(X) -> Std(k*X) = k * Std(X)
         std_dev_original = std_dev_scaled * self.scaler_y.scale_ 
 
-        # 6. Set model back to eval mode (optional, but good practice if not done externally)
+        # 6. Inverse transform posterior samples for compatibility with BayesianOptimizer
+        posterior_samples_original = np.array([
+            self.scaler_y.inverse_transform(predictions_scaled[i])
+            for i in range(num_samples)
+        ])
+
+        # 7. Set model back to eval mode (optional, but good practice if not done externally)
         self.eval() 
         
-        return mean_predictions_original, std_dev_original
+        return mean_predictions_original, std_dev_original, posterior_samples_original
 
     def _get_input_columns(self):
         """Returns the input columns used for training."""
@@ -198,7 +213,7 @@ def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights
     )
 
     # 2. Get Predictions and Uncertainties
-    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs, input_columns=input_columns)
+    predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs, input_columns=input_columns)
 
     # 3. Map Predictions and Target-Specific Uncertainties
     for i, col in enumerate(target_columns):

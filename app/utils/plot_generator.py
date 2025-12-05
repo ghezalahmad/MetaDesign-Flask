@@ -6,18 +6,47 @@ from sklearn.manifold import TSNE
 
 class PlotGenerator:
 
+
+    # Cache to store t-SNE results: key -> DataFrame with tsne columns
+    _tsne_cache = {}
+
     # ======================================================
     #   TSNE CALCULATION (SLAMD-EXACT WITH NORMALIZATION)
     # ======================================================
     @classmethod
-    def _run_tsne(cls, df: pd.DataFrame, input_columns):
+    def _run_tsne(cls, df: pd.DataFrame, input_columns, cache_key=None):
         """
         Calculate TSNE coordinates EXACTLY like SLAMD.
         CRITICAL: SLAMD standardizes features before TSNE!
+        
+        Args:
+            df: DataFrame containing the data
+            input_columns: List of input column names
+            cache_key: Optional key for caching the result (e.g., filename + timestamp)
         """
         if df is None or df.empty:
             print("⚠️ TSNE: empty dataframe")
             return df
+            
+        # Check cache if key is provided
+        if cache_key and cache_key in cls._tsne_cache:
+            print(f"✅ TSNE: Using cached coordinates for key: {cache_key}")
+            cached_data = cls._tsne_cache[cache_key]
+            
+            # We need to merge the cached TSNE coordinates back into the current df
+            # The current df might have different utility/predictions, but the rows (and their order) 
+            # for TSNE purposes (input space) should be the same if the cache key is valid.
+            
+            # It's safest to rely on Row number or index for merging, 
+            # but usually the df passed here is the full dataset in the same order.
+            
+            if len(df) == len(cached_data):
+                df = df.copy()
+                df['tsne-2d-one'] = cached_data['tsne-2d-one'].values
+                df['tsne-2d-two'] = cached_data['tsne-2d-two'].values
+                return df
+            else:
+                print("⚠️ TSNE: Cache mismatch in length, re-calculating...")
             
         df = df.copy()
         
@@ -85,6 +114,11 @@ class PlotGenerator:
             df['tsne-2d-one'] = 0.0
             df['tsne-2d-two'] = 0.0
         
+        if cache_key:
+            # Store only the necessary columns to save memory
+            cls._tsne_cache[cache_key] = df[['tsne-2d-one', 'tsne-2d-two']].copy()
+            print(f"✅ TSNE: Cached results for key: {cache_key}")
+
         return df
 
 

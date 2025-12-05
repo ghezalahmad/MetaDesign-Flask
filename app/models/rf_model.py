@@ -44,13 +44,15 @@ class RFModel:
         Generates predictions and uncertainties (Standard Deviation).
         
         Returns:
-            (predictions, std_deviations) in original scale.
+            predictions: (n_samples, n_targets) in original scale
+            std_deviations: (n_samples, n_targets) in original scale
+            None: RF doesn't provide posterior samples
         """
         if not self.is_trained or not hasattr(self.model, 'estimators_'):
             # If the model hasn't been fitted, return zeros
             n = len(X)
             out_targets = self.scaler_y.scale_.shape[0] if hasattr(self.scaler_y, 'scale_') else 1
-            return np.zeros((n, out_targets)), np.zeros((n, out_targets))
+            return np.zeros((n, out_targets)), np.zeros((n, out_targets)), None
 
         # 1. Preprocess Input
         X_df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=input_columns)
@@ -79,7 +81,7 @@ class RFModel:
         variance_original = variance_scaled * scale_sq
         std_original = np.sqrt(np.maximum(variance_original, 1e-12)) # (n_samples, n_targets)
 
-        return predictions, std_original
+        return predictions, std_original, None
 
 
 def train_rf_model(data, input_columns, target_columns):
@@ -124,7 +126,7 @@ def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, wei
     )
 
     # 3. Get Predictions explicitly to fill DataFrame columns
-    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
+    predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
     
     # 4. Map Predictions and Uncertainties to columns
     for i, col in enumerate(target_columns):

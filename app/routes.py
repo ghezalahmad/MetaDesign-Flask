@@ -20,7 +20,9 @@ from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
 from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
 from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
 from app.models.ensemble import weighted_uncertainty_ensemble
-from app.models.bayesian_optimizer import BayesianOptimizer 
+from app.models.ensemble import weighted_uncertainty_ensemble
+# from app.models.bayesian_optimizer import BayesianOptimizer # Removed broken usage
+from app.utils.utils import calculate_utility, calculate_novelty
 from app.utils.plot_generator import PlotGenerator
 
 logging.basicConfig(level=logging.DEBUG)
@@ -60,7 +62,7 @@ MODEL_CONFIG = {
         'model_class': GPModel,
         'train_func': train_gp_model,
         'evaluate_func': evaluate_gp_model,
-        'train_params': None,
+        'train_params': ({}),  # Empty dict for model_params
     },
     'lolopy': {
         'model_class': LolopyRFModel,
@@ -72,7 +74,7 @@ MODEL_CONFIG = {
         'model_class': DKLModel,
         'train_func': train_dkl_model,
         'evaluate_func': evaluate_dkl_model,
-        'train_params': None,
+        'train_params': ({}),  # Empty dict for model_params
     },
 }
 
@@ -320,13 +322,32 @@ def run_experiment():
             if 'train_func' in config_entry:
                 train_func = config_entry['train_func']
                 train_params = config_entry.get('train_params')
-                if train_params is not None:
+                
+                # DKL and GP have different signatures - they don't take model as first arg
+                if model_name in ['dkl', 'gp']:
+                    if train_params is not None:
+                        # train_params is a tuple with a single dict, extract it
+                        model_params = train_params[0] if isinstance(train_params, tuple) else train_params
+                        model, _, _ = train_func(data, input_columns, target_columns, model_params)
+                    else:
+                        model, _, _ = train_func(data, input_columns, target_columns, {})
+                elif train_params is not None:
                     model, _, _ = train_func(model, data, input_columns, target_columns, *train_params)
                 else:
                     model, _, _ = train_func(data, input_columns, target_columns)
 
             evaluate_func = config_entry['evaluate_func']
-            results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+            
+            # DKL and GP have different evaluate signatures
+            if model_name in ['dkl', 'gp']:
+                # These expect: (model, labeled_data, candidate_inputs, input_columns, target_columns, weights, max_or_min, curiosity)
+                labeled_data = data.dropna(subset=target_columns)
+                candidate_data = data[data[target_columns[0]].isnull()] if isinstance(target_columns, list) else data[data[target_columns].isnull()]
+                candidate_inputs = candidate_data[input_columns]
+                results_df = evaluate_func(model, labeled_data, candidate_inputs, input_columns, target_columns, weights, max_or_min, curiosity)
+            else:
+                # Standard signature: (model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+                results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
 
         elif model_name == 'ensemble':
             pinn_model = PINNModel(input_size=input_size, output_size=output_size)
@@ -340,7 +361,7 @@ def run_experiment():
              return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
 
         if 'Utility' not in results_df.columns or results_df['Utility'].isnull().all():
-             optimizer = BayesianOptimizer(data[input_columns].values, data[target_columns].values, target_columns_config)
+             # optimizer = BayesianOptimizer(data[input_columns].values, data[target_columns].values, target_columns_config)
              pred_col = 'prediction' if 'prediction' in results_df.columns else target_columns[0]
              unc_col = 'uncertainty' if 'uncertainty' in results_df.columns else 'Uncertainty'
              
@@ -354,7 +375,37 @@ def run_experiment():
              else:
                  uncs = np.ones((len(results_df), 1)) * 0.1
 
-             utility = optimizer.calculate_utility(preds, uncs, curiosity)
+             # --- SLAMD-like Bayesian Optimization Logic ---
+             # 1. Calculate Novelty
+             # 'results_df' contains predictions for unlabeled/candidate samples only
+             # We need to calculate novelty for these candidates relative to labeled samples
+             
+             # Identify labeled data (rows where ALL targets are present)
+             is_labeled = ~data[target_columns].isnull().any(axis=1)
+             labeled_features = data.loc[is_labeled, input_columns].values
+             
+             # Get features for the samples in results_df
+             # results_df should have the same index as the unlabeled rows in data
+             candidate_features = data.loc[results_df.index, input_columns].values
+             
+             # Calculate novelty for candidate samples relative to labeled set
+             novelty_scores = calculate_novelty(candidate_features, labeled_features)
+             results_df['Novelty'] = novelty_scores
+
+             # 2. Calculate Utility
+             # predictions: (n_samples, 1) - we use the primary prediction column
+             # uncertainties: (n_samples, 1)
+             # novelty: (n_samples, 1)
+             
+             utility = calculate_utility(
+                 predictions=preds,
+                 uncertainties=uncs,
+                 novelty=novelty_scores,
+                 curiosity=curiosity,
+                 weights=weights,
+                 max_or_min=max_or_min,
+                 acquisition="UCB" # Default to UCB-like logic inside calculate_utility
+             )
              results_df['Utility'] = utility.flatten()
 
         results_df['Utility'] = pd.to_numeric(results_df['Utility'], errors='coerce').fillna(0.0)
@@ -396,7 +447,13 @@ def run_experiment():
         print(f"   Training samples (labelled): {tsne_df['is_train_data'].sum()}")
         print(f"   Prediction samples (predicted): {(~tsne_df['is_train_data']).sum()}")
         
-        tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns)
+        
+        tsne_cache_key = None
+        if filepath and os.path.exists(filepath):
+             mtime = os.path.getmtime(filepath)
+             tsne_cache_key = f"{filepath}_{mtime}"
+        
+        tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns, cache_key=tsne_cache_key)
         
         cols_to_merge = ['Utility', 'Uncertainty']
         common_indices = tsne_df.index.intersection(results_df.index)
@@ -457,8 +514,13 @@ def run_experiment():
         prediction_error_plot = {'data': [], 'layout': {'title': 'Error Plot N/A'}}
 
         print(f"📊 Preparing results table...")
+        
+        # Ensure results are sorted by Utility descending (SLAMD style)
+        if 'Utility' in results_df.columns:
+            results_df = results_df.sort_values(by='Utility', ascending=False)
+            
         if len(results_df) > 500:
-            table_df = results_df.nlargest(500, 'Utility')
+            table_df = results_df.head(500)
             table_html = table_df.to_html(classes="table table-striped", index=False)
             table_html += f'<p class="text-muted"><em>Showing top 500 of {len(results_df)} results by Utility. Download full results using the buttons above.</em></p>'
         else:

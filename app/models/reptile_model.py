@@ -47,12 +47,16 @@ class ReptileModel(nn.Module):
         return self.output_layer(h)
 
     def predict(self, X_input: pd.DataFrame | np.ndarray):
-        mean_preds, _ = self.predict_with_uncertainty(X_input, num_samples=1)
+        mean_preds, _, _ = self.predict_with_uncertainty(X_input, num_samples=1)
         return mean_preds
 
     def predict_with_uncertainty(self, X_input: pd.DataFrame | np.ndarray, input_columns=None, num_samples=30, dropout_rate=0.3):
         if not self.is_trained or self.scaler_x is None or self.scaler_y is None:
             raise RuntimeError("Model is not trained yet or scalers are missing.")
+
+        # Handle None value for num_samples
+        if num_samples is None:
+            num_samples = 30
 
         self.train()
         for module in self.modules():
@@ -76,8 +80,14 @@ class ReptileModel(nn.Module):
 
         mean_predictions_original = self.scaler_y.inverse_transform(mean_predictions_scaled)
         std_dev_original = std_dev_scaled * self.scaler_y.scale_
+        
+        # Return posterior samples for compatibility
+        posterior_samples_original = np.array([
+            self.scaler_y.inverse_transform(predictions_scaled[i])
+            for i in range(num_samples)
+        ])
 
-        return mean_predictions_original, std_dev_original
+        return mean_predictions_original, std_dev_original, posterior_samples_original
 
     def _get_input_columns(self):
         return self.scaler_x.feature_names_in_ if self.scaler_x else None
@@ -158,7 +168,7 @@ def evaluate_reptile(model, data, input_columns, target_columns, curiosity, weig
         input_columns=input_columns
     )
 
-    predictions, uncertainties = model.predict_with_uncertainty(candidate_inputs)
+    predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
