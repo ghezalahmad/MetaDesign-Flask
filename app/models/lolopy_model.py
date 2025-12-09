@@ -127,44 +127,60 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
 
-    # 3. Compute utility via Bayesian optimization
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=weights_targets,
-        max_or_min=max_or_min_targets,
-        curiosity=curiosity,
-        acquisition="UCB",
-        strategy="weighted_sum",
-        surrogate_model=model,
-        input_columns=input_columns
-    )
-
-    # 4. Surrogate predictions and uncertainties
+    # 3. Get predictions and uncertainties from model
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 5. Utility: ensure existence and numeric type
-    if utility_scores is None:
-        print("⚠ evaluate_lolopy_model: utility_scores is None, setting Utility = 0.0")
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        if len(utility_scores) != len(candidate_df):
-            print(
-                f"⚠ evaluate_lolopy_model: "
-                f"len(utility_scores)={len(utility_scores)} != len(candidate_df)={len(candidate_df)}. "
-                f"Using min length."
-            )
-            n = min(len(utility_scores), len(candidate_df))
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-
-        candidate_df["Utility"] = utility_scores
+    # 4. WEBSLAMD-EXACT UTILITY CALCULATION
+    # Get labeled data statistics for normalization  
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    # DEBUG: Print values to understand the calculation
+    print(f"\n📊 UTILITY DEBUG:")
+    print(f"   Labels mean: {dict(labels_mean)}")
+    print(f"   Labels std: {dict(labels_std)}")
+    print(f"   Predictions range: {predictions.min():.2f} to {predictions.max():.2f}")
+    print(f"   Curiosity: {curiosity}")
+    print(f"   Max/Min targets: {max_or_min_targets}")
+    
+    # Normalize predictions using LABELED DATA mean/std
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        col_vals = predictions[:, i]
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        
+        preds_norm[:, i] = (col_vals - mean_val) / std_val
+        
+        # WEBSLAMD: Invert for minimization targets
+        if max_or_min_targets[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        
+        # Apply weight
+        preds_norm[:, i] *= weights_targets[i]
+        
+        # Uncertainty scaled by labels_std
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights_targets[i]
+        
+        print(f"   Target '{col}': pred_norm range = [{preds_norm[:, i].min():.2f}, {preds_norm[:, i].max():.2f}]")
+    
+    # WEBSLAMD utility formula
+    pred_sum = preds_norm.sum(axis=1)
+    unc_sum = unc_norm.sum(axis=1)
+    utility_scores = pred_sum + curiosity * unc_sum
+    
+    print(f"   Pred sum range: [{pred_sum.min():.2f}, {pred_sum.max():.2f}]")
+    print(f"   Unc sum range: [{unc_sum.min():.2f}, {unc_sum.max():.2f}]")
+    print(f"   Final utility range: [{utility_scores.min():.2f}, {utility_scores.max():.2f}]")
+    
+    candidate_df["Utility"] = utility_scores
 
     # Make sure Utility is clean
     candidate_df["Utility"] = (
@@ -182,12 +198,7 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 8. Simple Exploration / Exploitation metrics
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    # Exploitation: mean predicted target across selected targets
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
-
-    # 9. Select best candidate
+    # 8. Select best candidate (WEBSLAMD: no Exploration/Exploitation columns)
     candidate_df["Selected for Testing"] = False
     if "Utility" in candidate_df.columns and not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
@@ -195,7 +206,7 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     else:
         print("⚠ evaluate_lolopy_model: Utility column is missing or empty when selecting best candidate.")
 
-    # 10. Final sorting
+    # 9. Final sorting by Utility (descending) - WEBSLAMD style
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
 
     print("✅ evaluate_lolopy_model: result_df shape =", result_df.shape)

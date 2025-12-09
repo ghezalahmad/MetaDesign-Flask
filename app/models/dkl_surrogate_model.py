@@ -191,78 +191,60 @@ def evaluate_dkl_model(model: DKLModel, labeled_data: pd.DataFrame, candidate_in
                        input_columns: list[str], target_columns: list[str], 
                        weights: list[float], max_or_min: list[str], curiosity: float) -> pd.DataFrame:
     """
-    Uses the trained DKL model as a surrogate for Bayesian Optimization 
-    to evaluate and score candidate materials.
+    Uses the trained DKL model to evaluate candidates using WEBSLAMD utility formula.
     """
-    logging.info("Running Bayesian Optimization with DKL surrogate to score candidates.")
+    logging.info("Evaluating candidates with DKL using WEBSLAMD utility formula.")
     
-    # Extract training inputs and targets for BO context (needed for novelty and utility)
-    train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns]
-    
-    # 1. Calculate Utility Scores using BO
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=np.array(weights),
-        max_or_min=max_or_min,
-        curiosity=curiosity,
-        acquisition="UCB", # UCB is typically best with NN-based models like DKL
-        strategy="weighted_sum",
-        surrogate_model=model, # Pass the DKLModel instance
-        input_columns=input_columns
-    )
-
-    # 2. Get predictions and uncertainties from the DKL model
+    # 1. Get predictions and uncertainties from the DKL model
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
-    # 3. Prepare the results DataFrame
+    # 2. Prepare the results DataFrame
     candidate_df = candidate_inputs.copy()
     
-    # Add prediction and uncertainty for each target
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
-        # Store individual target uncertainty
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 4. Assign Utility Scores
-    if utility_scores is None:
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        n = min(len(utility_scores), len(candidate_df))
-        if len(utility_scores) != len(candidate_df):
-            # Trim if BO returned an uneven number of scores
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-        candidate_df["Utility"] = utility_scores
-
+    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        
+        if max_or_min[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        
+        preds_norm[:, i] *= weights[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
     
-    # 5. Calculate Aggregate Uncertainty (Mean of all target uncertainties)
+    # 4. Calculate Aggregate Uncertainty
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # 6. Calculate Novelty
+    # 5. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 7. Exploration / Exploitation
-    # Exploration: UCB's exploration term is already incorporated into Utility, 
-    # but we track uncertainty contribution separately.
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    # Exploitation: Mean predicted value of the primary target(s)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
-
-    # 8. Selection Flag
+    # 6. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 9. Final sorting
+    # 7. Final sorting
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     
     return result_df

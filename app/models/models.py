@@ -16,7 +16,7 @@ from app.utils.utils import calculate_novelty
 # ==========================================
 
 class MAMLModel(nn.Module):
-    # Reduced hidden_size to 64 and num_layers to 2 for 97 samples
+    # Hidden size of 64 balances model capacity and generalization
     def __init__(self, input_size, output_size, hidden_size=64, num_layers=2, dropout_rate=0.3):
         super(MAMLModel, self).__init__()
         
@@ -83,7 +83,7 @@ class MAMLModel(nn.Module):
         """
         pass
 
-    def predict_with_uncertainty(self, X, input_columns=None, num_samples=30):
+    def predict_with_uncertainty(self, X, input_columns=None, num_samples=50):
         """
         Primary inference method called by BayesianOptimizer.
         
@@ -143,18 +143,15 @@ class MAMLModel(nn.Module):
         # 5. Inverse Transform to Original Scale
         mean_preds_original = self.scaler_y.inverse_transform(mean_preds_scaled)
         
-        # --- NEW: Clip predictions to the observed training range ---
+        # Soft clipping: Allow predictions up to 50% beyond training range
+        # This allows exploration while preventing unrealistic extrapolation
         if self.y_min_train is not None and self.y_max_train is not None:
-            # Add a 20% buffer to allow for reasonable extrapolation beyond the training range
-            buffer_min = self.y_min_train - (np.abs(self.y_min_train) * 0.2)
-            buffer_max = self.y_max_train + (np.abs(self.y_max_train) * 0.2)
+            buffer_factor = 0.5  # 50% beyond training range
+            range_size = self.y_max_train - self.y_min_train
+            soft_min = self.y_min_train - (range_size * buffer_factor)
+            soft_max = self.y_max_train + (range_size * buffer_factor)
             
-            mean_preds_original = np.clip(
-                mean_preds_original, 
-                buffer_min, 
-                buffer_max
-            )
-        # -----------------------------------------------------------
+            mean_preds_original = np.clip(mean_preds_original, soft_min, soft_max)
 
         # Inverse transform posterior samples
         # We need to iterate because inverse_transform expects 2D (n_points, n_targets)
@@ -180,6 +177,129 @@ class MAMLModel(nn.Module):
         """Scikit-learn compatibility wrapper."""
         mu, _, _ = self.predict_with_uncertainty(X, num_samples=1)
         return mu
+
+
+# ==========================================
+# 1.5 MULTI-TARGET WRAPPER (Like Lolopy)
+# Trains separate NN per target for better diversity
+# ==========================================
+
+class MAMLMultiTargetWrapper:
+    """
+    Wrapper that trains separate MAMLModel per target (like Lolopy RF).
+    This prevents prediction collapse common with multi-output NNs.
+    """
+    def __init__(self, input_size, target_columns, hidden_size=64, num_layers=2, dropout_rate=0.3):
+        self.input_size = input_size
+        self.target_columns = target_columns
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout_rate = dropout_rate
+        
+        # One model per target
+        self.models = []
+        self.scalers_x = []
+        self.scalers_y = []
+        self.is_trained = False
+        
+    def train(self, X, y, epochs=100):
+        """Train one NN per target column."""
+        from sklearn.preprocessing import StandardScaler
+        
+        if isinstance(y, pd.DataFrame):
+            y_np = y.values
+        else:
+            y_np = y
+            
+        if y_np.ndim == 1:
+            y_np = y_np.reshape(-1, 1)
+            
+        if isinstance(X, pd.DataFrame):
+            X_np = X.values
+        else:
+            X_np = X
+            
+        self.models = []
+        self.scalers_x = []
+        self.scalers_y = []
+        
+        num_targets = y_np.shape[1]
+        print(f"MAMLMultiTarget: Training {num_targets} separate models...")
+        
+        for i in range(num_targets):
+            # Create single-output model
+            model = MAMLModel(
+                input_size=self.input_size,
+                output_size=1,
+                hidden_size=self.hidden_size,
+                num_layers=self.num_layers,
+                dropout_rate=self.dropout_rate
+            )
+            
+            # Fit scalers
+            scaler_x = StandardScaler().fit(X_np)
+            scaler_y = StandardScaler().fit(y_np[:, i:i+1])
+            
+            model.scaler_x = scaler_x
+            model.scaler_y = scaler_y
+            model.y_min_train = np.min(y_np[:, i])
+            model.y_max_train = np.max(y_np[:, i])
+            
+            # Train with mini MAML loop
+            self._train_single_model(model, X_np, y_np[:, i], scaler_x, scaler_y, epochs)
+            
+            model.is_trained = True
+            self.models.append(model)
+            self.scalers_x.append(scaler_x)
+            self.scalers_y.append(scaler_y)
+            
+        self.is_trained = True
+        print(f"MAMLMultiTarget: All {num_targets} models trained.")
+        
+    def _train_single_model(self, model, X_np, y_target, scaler_x, scaler_y, epochs):
+        """Train a single target model using standard NN training."""
+        X_scaled = scaler_x.transform(X_np)
+        y_scaled = scaler_y.transform(y_target.reshape(-1, 1))
+        
+        inputs = torch.tensor(X_scaled, dtype=torch.float32)
+        targets = torch.tensor(y_scaled, dtype=torch.float32)
+        
+        optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+        loss_fn = nn.MSELoss()
+        
+        model.train()
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            preds = model(inputs)
+            loss = loss_fn(preds, targets)
+            loss.backward()
+            optimizer.step()
+            
+        model.eval()
+        
+    def predict_with_uncertainty(self, X, input_columns=None, num_samples=50):
+        """Aggregate predictions from all per-target models."""
+        if not self.is_trained:
+            raise RuntimeError("Model not trained yet.")
+            
+        if isinstance(X, pd.DataFrame):
+            X_np = X.values
+        else:
+            X_np = X
+            
+        all_preds = []
+        all_stds = []
+        
+        for i, model in enumerate(self.models):
+            # Use the per-model prediction
+            preds, stds, _ = model.predict_with_uncertainty(X, input_columns, num_samples)
+            all_preds.append(preds[:, 0:1])
+            all_stds.append(stds[:, 0:1])
+            
+        final_preds = np.hstack(all_preds)
+        final_stds = np.hstack(all_stds)
+        
+        return final_preds, final_stds, None
 
 
 # ==========================================
@@ -310,12 +430,12 @@ def meta_train(meta_model: MAMLModel, data: pd.DataFrame, input_columns: list, t
 # 3. EVALUATION LOGIC
 # ==========================================
 
-def evaluate_maml(model: MAMLModel, data: pd.DataFrame, input_columns: list,
+def evaluate_maml(model, data: pd.DataFrame, input_columns: list,
                   target_columns: list, curiosity: float, weights_targets: np.ndarray,
                   max_or_min_targets: list[str]):
     """
-    Evaluates candidates using MAML as the surrogate.
-    Mirrors evaluate_lolopy_model structure.
+    Evaluates candidates using MAML with per-target training (like Lolopy).
+    Uses MAMLMultiTargetWrapper for better prediction diversity.
     """
     
     # 1. Split labeled vs candidate rows
@@ -325,46 +445,39 @@ def evaluate_maml(model: MAMLModel, data: pd.DataFrame, input_columns: list,
     if candidate_df.empty:
         return pd.DataFrame()
 
-    # 2. Ensure model is trained
+    # 2. Use MAMLMultiTargetWrapper (like Lolopy RF)
     if not getattr(model, 'is_trained', False):
-        print("evaluate_maml: Model untrained. Training now...")
-        model, _, _ = meta_train(model, data, input_columns, target_columns)
+        print("evaluate_maml: Using MAMLMultiTargetWrapper for per-target training...")
+        wrapper = MAMLMultiTargetWrapper(
+            input_size=len(input_columns),
+            target_columns=target_columns,
+            hidden_size=64,
+            num_layers=2,
+            dropout_rate=0.3
+        )
+        wrapper.train(
+            labeled_data[input_columns],
+            labeled_data[target_columns],
+            epochs=100
+        )
+        model = wrapper
 
-    train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
 
-    # 3. Run Bayesian Optimization
-    # This will call model.predict_with_uncertainty internally
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=weights_targets,
-        max_or_min=max_or_min_targets,
-        curiosity=curiosity,
-        acquisition="UCB",
-        strategy="weighted_sum",
-        surrogate_model=model, 
-        input_columns=input_columns 
-    )
-
-    # 4. Get Predictions explicitly to fill DataFrame columns
+    # 3. Get Predictions
     predictions, uncertainties, _ = model.predict_with_uncertainty(
         candidate_inputs, 
         input_columns=input_columns,
-        num_samples=30
+        num_samples=50
     )
 
-    # 5. Map to columns
+    # 4. Map to columns
     for i, col in enumerate(target_columns):
-        # Predictions
         if predictions.ndim == 1:
             candidate_df[col] = predictions
         else:
             candidate_df[col] = predictions[:, i]
             
-        # Uncertainties (Broadcasting check)
         if uncertainties.ndim == 1:
              candidate_df[f"Uncertainty ({col})"] = uncertainties
         elif uncertainties.shape[1] == 1:
@@ -372,43 +485,52 @@ def evaluate_maml(model: MAMLModel, data: pd.DataFrame, input_columns: list,
         else:
              candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 6. Assign Utility Scores
-    if utility_scores is None:
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        # Safety truncation
-        n = min(len(utility_scores), len(candidate_df))
-        if len(utility_scores) != len(candidate_df):
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-        candidate_df["Utility"] = utility_scores
-
+    # 5. WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    n_targets = len(target_columns)
+    if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 1)
+    if uncertainties.ndim == 1:
+        uncertainties = uncertainties.reshape(-1, 1)
+        
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        if max_or_min_targets[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        preds_norm[:, i] *= weights_targets[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights_targets[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
-    # 7. Calculate Aggregate Uncertainty
+    # 6. Calculate Aggregate Uncertainty
     if uncertainties.ndim > 1 and uncertainties.shape[1] > 1:
         candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
     else:
         candidate_df["Uncertainty"] = uncertainties.flatten()
 
-    # 8. Calculate Novelty
+    # 7. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 9. Exploration / Exploitation
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
-
-    # 10. Selection Flag
+    # 8. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 11. Final Sort
+    # 9. Final Sort
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
 
     return result_df

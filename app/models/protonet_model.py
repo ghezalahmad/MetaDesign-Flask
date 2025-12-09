@@ -160,9 +160,9 @@ def protonet_train(model, data, input_columns, target_columns, epochs=50, learni
     return model, scaler_x, scaler_y
 
 def evaluate_protonet(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
+    """Evaluate ProtoNet model using WEBSLAMD utility formula."""
     labeled_data = data.dropna(subset=target_columns)
 
-    # --- FIXED: identify unlabeled (candidate) samples properly ---
     if isinstance(target_columns, list) and len(target_columns) > 0:
         candidate_df = data[data[target_columns[0]].isnull()].copy()
     else:
@@ -172,40 +172,38 @@ def evaluate_protonet(model, data, input_columns, target_columns, curiosity, wei
         st.warning("No candidate samples to evaluate.")
         return pd.DataFrame()
 
-    train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
-
-    st.info("Using Bayesian Optimization with ProtoNet surrogate to score candidates.")
-    
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=np.array(weights),
-        max_or_min=max_or_min,
-        curiosity=curiosity,
-        acquisition="UCB",
-        strategy="weighted_sum",
-        surrogate_model=model,
-        input_columns=input_columns
-    )
-
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
+        candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    candidate_df["Utility"] = utility_scores if utility_scores is not None else 0
+    # WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        if max_or_min[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        preds_norm[:, i] *= weights[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
     
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
-
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1 + curiosity)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
 
     candidate_df["Selected for Testing"] = False
     if not candidate_df.empty:

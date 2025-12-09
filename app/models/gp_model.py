@@ -4,7 +4,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
 from sklearn.neighbors import NearestNeighbors
-import streamlit as st # Assuming Streamlit components for logging/warnings
+import logging
 
 # Assuming this internal import path is correct for your setup
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
@@ -42,7 +42,7 @@ class GPModel:
         train_data = data.dropna(subset=target_columns)
 
         if train_data.empty or len(train_data) < 2:
-            st.warning("Insufficient data to train GPModel. Using dummy scalers.")
+            logging.warning("Insufficient data to train GPModel. Using dummy scalers.")
             X_dummy = pd.DataFrame(np.zeros((2, len(input_columns))), columns=input_columns)
             y_dummy = pd.DataFrame(np.zeros((2, len(target_columns))), columns=target_columns)
             self.scaler_x.fit(X_dummy)
@@ -73,20 +73,27 @@ class GPModel:
         self.is_trained = True
         print(f"GPModel trained successfully with {len(self.gp_models)} independent models.")
 
-    def predict_with_uncertainty(self, X_input: pd.DataFrame, return_std=True):
+    def predict_with_uncertainty(self, X_input: pd.DataFrame, input_columns=None, num_samples=None):
         """
         Generates predictions and associated standard deviations (uncertainty).
         
+        Args:
+            X_input: Input features as DataFrame
+            input_columns: Optional, for compatibility with other models
+            num_samples: Optional, for compatibility (not used by GP)
+        
         Returns:
-            tuple: (np.ndarray of predictions, np.ndarray of standard deviations)
+            tuple: (predictions, uncertainties, None)
         """
         if not self.is_trained:
-            st.warning("GPModel is not trained. Returning zeros for predictions and uncertainties.")
+            logging.warning("GPModel is not trained. Returning zeros for predictions and uncertainties.")
             num_targets = len(self.target_columns) if self.target_columns else 1
-            num_samples = len(X_input)
-            return np.zeros((num_samples, num_targets)), np.ones((num_samples, num_targets)) * 1.0
+            n_samples = len(X_input)
+            return np.zeros((n_samples, num_targets)), np.ones((n_samples, num_targets)) * 1.0, None
         
-        X_np = X_input[self.input_columns].values
+        # Use stored input_columns or fallback to passed parameter
+        cols = self.input_columns if self.input_columns else input_columns
+        X_np = X_input[cols].values if cols else X_input.values
         X_scaled = self.scaler_x.transform(X_np)
         
         # Collect predictions and std devs for all targets
@@ -95,7 +102,7 @@ class GPModel:
         
         for gp in self.gp_models:
             # Predict mean (mu_scaled) and standard deviation (std_scaled)
-            mu_scaled, std_scaled = gp.predict(X_scaled, return_std=return_std)
+            mu_scaled, std_scaled = gp.predict(X_scaled, return_std=True)
             predictions_scaled.append(mu_scaled.reshape(-1, 1))
             std_devs_scaled.append(std_scaled.reshape(-1, 1))
 
@@ -117,7 +124,7 @@ class GPModel:
         # Reshape the scale factors to broadcast correctly
         uncertainties_unscaled = std_devs_scaled_combined * scale_factors_y
 
-        return predictions_unscaled, uncertainties_unscaled, None  # Add None for posterior samples
+        return predictions_unscaled, uncertainties_unscaled, None
 
 def train_gp_model(data: pd.DataFrame, input_columns: list, target_columns: list, model_params: dict):
     """
@@ -139,74 +146,63 @@ def evaluate_gp_model(
     curiosity: float
 ) -> pd.DataFrame:
     """
-    Uses the trained GP model to evaluate candidate inputs based on a 
-    multi-objective Bayesian Optimization utility score.
+    Uses the trained GP model to evaluate candidates using WEBSLAMD utility formula.
     """
     if not model.is_trained:
-        st.warning("GPModel is not trained. Evaluation skipped.")
+        logging.warning("GPModel is not trained. Evaluation skipped.")
         return candidate_inputs.copy()
 
-    # 1. Run multi-objective Bayesian Optimization to get utility scores
-    st.info("🎯 Running multi-objective Bayesian Optimization with GP surrogate to score candidates.")
-    
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=labeled_data[input_columns],
-        train_targets=labeled_data[target_columns],
-        candidate_inputs=candidate_inputs,
-        weights=np.array(weights),
-        max_or_min=max_or_min,
-        curiosity=curiosity,
-        acquisition="UCB", # UCB is a good default for GP
-        strategy="weighted_sum",
-        surrogate_model=model,
-        input_columns=input_columns
-    )
-
-    # 2. Get predictions and uncertainties for all candidates
+    # 1. Get predictions and uncertainties
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
 
-    # 3. Build the results DataFrame
+    # 2. Build the results DataFrame
     candidate_df = candidate_inputs.copy()
     
-    # 4. Assign predictions and uncertainty per target
+    # 3. Assign predictions and uncertainty per target
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 5. Assign Utility Scores
-    if utility_scores is None:
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        # Safety truncation
-        n = min(len(utility_scores), len(candidate_df))
-        if len(utility_scores) != len(candidate_df):
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-        candidate_df["Utility"] = utility_scores
-
+    # 4. WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        
+        if max_or_min[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        
+        preds_norm[:, i] *= weights[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
-    # 6. Calculate Aggregate Uncertainty (Mean of target uncertainties)
+    # 5. Calculate Aggregate Uncertainty
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # 7. Calculate Novelty
+    # 6. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 8. Exploration / Exploitation
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
-
-    # 9. Selection Flag
+    # 7. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 10. Final sorting
+    # 8. Final sorting
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     
     return result_df

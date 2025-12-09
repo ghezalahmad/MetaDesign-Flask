@@ -4,7 +4,7 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel, WhiteKernel
-import streamlit as st
+import logging
 from app.utils.utils import calculate_novelty, enforce_diversity
 
 
@@ -203,7 +203,7 @@ class BayesianOptimizer:
 
         # Get predictions and uncertainties using the new unified method
         # We don't need posterior samples for these standard acquisition functions.
-        mu, sigma, _ = self._get_surrogate_prediction(X_np, return_posterior_samples=False)
+        mu, sigma, _ = self._get_surrogate_prediction(X, return_posterior_samples=False)
 
         # Ensure sigma is non-negative (it's std_dev) and not zero to avoid division errors.
         sigma = np.maximum(sigma, 1e-9) # Changed from 1e-6 to 1e-9 for potentially smaller std devs
@@ -369,7 +369,7 @@ def multi_objective_bayesian_optimization(
         train_inputs = train_inputs[valid_indices]
 
     if len(train_inputs) == 0:
-        st.warning("No valid training data. Returning random scores.")
+        logging.warning("No valid training data. Returning random scores.")
         return np.random.rand(len(candidate_inputs))
 
     # Determine effective weights for scalarization
@@ -377,7 +377,7 @@ def multi_objective_bayesian_optimization(
         if n_objectives_from_targets > 0:
             random_w = np.random.dirichlet(np.ones(n_objectives_from_targets), size=1).ravel()
             effective_weights = random_w
-            st.info(f"ParEGO strategy: using random weights: {np.round(effective_weights, 3)}")
+            logging.info(f"ParEGO strategy: using random weights: {np.round(effective_weights, 3)}")
         else:
             effective_weights = np.array([1.0]) # Fallback
     elif strategy == "pareto":
@@ -502,11 +502,14 @@ def multi_objective_bayesian_optimization(
 
     # Novelty / diversity term
     try:
-        novelty_scores = calculate_novelty(candidate_inputs_df)
+        # Calculate novelty relative to labeled/training samples
+        candidate_features = candidate_inputs_df.values if isinstance(candidate_inputs_df, pd.DataFrame) else candidate_inputs_df
+        labeled_features = train_inputs.values if isinstance(train_inputs, pd.DataFrame) else train_inputs
+        novelty_scores = calculate_novelty(candidate_features, labeled_features)
         if novelty_scores is not None and np.all(np.isfinite(novelty_scores)):
             novelty_scores = (novelty_scores - np.min(novelty_scores)) / (np.max(novelty_scores) - np.min(novelty_scores) + 1e-12)
             acq_values_total += 0.1 * curiosity * novelty_scores
     except Exception as e:
-        st.warning(f"Novelty calculation failed: {e}")
+        logging.warning(f"Novelty calculation failed: {e}")
 
     return acq_values_total.flatten()

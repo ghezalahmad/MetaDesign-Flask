@@ -92,14 +92,21 @@ class PINNModel(nn.Module):
         mean_predictions_original = self.scaler_y.inverse_transform(mean_predictions_scaled)
         # Var(k*X) = k^2 * Var(X) -> Std(k*X) = k * Std(X)
         std_dev_original = std_dev_scaled * self.scaler_y.scale_ 
+        
+        # 6. Apply SOFT CLIPPING: allow 50% beyond training range for exploration
+        if hasattr(self, 'train_min') and hasattr(self, 'train_max') and self.train_min is not None:
+            train_range = self.train_max - self.train_min
+            soft_min = self.train_min - 0.5 * train_range
+            soft_max = self.train_max + 0.5 * train_range
+            mean_predictions_original = np.clip(mean_predictions_original, soft_min, soft_max)
 
-        # 6. Inverse transform posterior samples for compatibility with BayesianOptimizer
+        # 7. Inverse transform posterior samples for compatibility with BayesianOptimizer
         posterior_samples_original = np.array([
             self.scaler_y.inverse_transform(predictions_scaled[i])
             for i in range(num_samples)
         ])
 
-        # 7. Set model back to eval mode (optional, but good practice if not done externally)
+        # 8. Set model back to eval mode (optional, but good practice if not done externally)
         self.eval() 
         
         return mean_predictions_original, std_dev_original, posterior_samples_original
@@ -131,12 +138,22 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     loss_function = nn.MSELoss()
+    
+    # Store training range for soft clipping (like MAML/Reptile)
+    model.train_min = labeled_data[target_columns].min().values
+    model.train_max = labeled_data[target_columns].max().values
 
     # 2. Training Loop
     print(f"Starting PINN training: {len(labeled_data)} samples, {epochs} epochs, Physics Weight: {physics_loss_weight}")
+    
+    total_data_loss = 0.0
+    total_physics_loss = 0.0
+    
     for epoch in range(epochs):
         # Set model to train mode
         model.train()
+        epoch_data_loss = 0.0
+        epoch_physics_loss = 0.0
         
         for i in range(0, len(inputs_tensor), batch_size):
             batch_inputs = inputs_tensor[i:i+batch_size]
@@ -148,30 +165,39 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
             # Data Loss (fitting the measured points)
             data_loss = loss_function(predictions, batch_targets)
             
-            # Physics Loss (enforcing physical laws, requires internal function)
-            physics_loss = compute_physics_loss(predictions, batch_inputs)
+            # Physics Loss (enforcing physical laws)
+            physics_loss = compute_physics_loss(predictions, batch_inputs, physics_weight=1.0)
             
-            # Total Loss
+            # Total Loss (physics_loss already weighted internally, but we apply user weight)
             loss = data_loss + physics_loss_weight * physics_loss
             loss.backward()
             optimizer.step()
+            
+            epoch_data_loss += data_loss.item()
+            epoch_physics_loss += physics_loss.item()
+        
+        total_data_loss = epoch_data_loss
+        total_physics_loss = epoch_physics_loss
+        
+        # Log progress every 25 epochs
+        if (epoch + 1) % 25 == 0 or epoch == 0:
+            print(f"  Epoch {epoch+1}/{epochs}: Data Loss={total_data_loss:.4f}, Physics Loss={total_physics_loss:.4f}")
 
     # 3. Finalization
     model.is_trained = True
     model.scaler_x = scaler_x
     model.scaler_y = scaler_y
     # Store feature names in scaler_x for compatibility with predict_with_uncertainty
-    if hasattr(scaler_x, 'feature_names_in_'):
-        model.scaler_x.feature_names_in_ = input_columns
+    model.scaler_x.feature_names_in_ = input_columns
     
     # Set model to evaluation mode after training
     model.eval()
 
-    print("PINN Training Completed.")
+    print(f"PINN Training Completed. Final Data Loss: {total_data_loss:.4f}, Physics Loss: {total_physics_loss:.4f}")
     return model, scaler_x, scaler_y
 
 def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
-    """Evaluates the PINN model on candidate samples using Bayesian Optimization."""
+    """Evaluates the PINN model on candidate samples using WEBSLAMD utility formula."""
 
     labeled_data = data.dropna(subset=target_columns)
     
@@ -185,77 +211,56 @@ def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights
         st.warning("No candidate samples to evaluate.")
         return pd.DataFrame()
     
-    # Check model training status and train if necessary
-    if not getattr(model, 'is_trained', False):
-        st.info("PINN: Model untrained. Training now...")
-        # Since this function only takes the model, we can't fully train here
-        # Assuming the caller has trained the model before calling evaluate
-        # If not, the prediction method will return zeros, which is safe.
-
-    train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
 
-    st.info("Using Bayesian Optimization with PINN surrogate to score candidates.")
-
-    # 1. Run Bayesian Optimization to get Utility Scores
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=np.array(weights),
-        max_or_min=max_or_min,
-        curiosity=curiosity,
-        acquisition="UCB",
-        strategy="weighted_sum",
-        surrogate_model=model,
-        input_columns=input_columns
-    )
-
-    # 2. Get Predictions and Uncertainties
+    # 1. Get Predictions and Uncertainties
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs, input_columns=input_columns)
 
-    # 3. Map Predictions and Target-Specific Uncertainties
+    # 2. Map Predictions and Target-Specific Uncertainties
     for i, col in enumerate(target_columns):
-        # Predictions
         candidate_df[col] = predictions[:, i]
-        # Target-specific Uncertainties (Std Dev)
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 4. Assign Utility Scores
-    if utility_scores is None:
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        # Safety truncation
-        n = min(len(utility_scores), len(candidate_df))
-        if len(utility_scores) != len(candidate_df):
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-        candidate_df["Utility"] = utility_scores
+    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
+    # Get labeled data statistics for normalization
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
     
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        
+        if max_or_min[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        
+        preds_norm[:, i] *= weights[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
-
-    # 5. Calculate Aggregate Uncertainty (Mean of target uncertainties)
+    # 4. Calculate Aggregate Uncertainty
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # 6. Calculate Novelty
+    # 5. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
-    # 7. Exploration / Exploitation
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1)
-
-    # 8. Selection Flag
+    # 6. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 9. Final Sort
+    # 7. Final Sort
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     return result_df

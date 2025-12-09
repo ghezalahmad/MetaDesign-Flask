@@ -1,13 +1,39 @@
-# Add these lines to your requirements.txt
+# ===========================================
+# MetaDesign-Flask Requirements
+# ===========================================
+
+# Core Flask
+flask>=2.3.0
+flask-compress>=1.13
+werkzeug>=2.3.0
+
+# Data Processing
+pandas>=1.5.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Machine Learning - Core
+scikit-learn>=1.3.0
+
+# Machine Learning - Deep Learning (for PINN, DKL, Reptile, ProtoNet, MAML)
+torch>=2.0.0
+
+# Machine Learning - Gaussian Process (optional GPU acceleration)
+# gpytorch>=1.10  # Uncomment if using GPyTorch-based DKL
+
+# Machine Learning - lolopy Random Forest
+lolopy>=1.0.0
+
+# Visualization
+plotly>=5.15.0
+matplotlib>=3.7.0
 
 # Explainability
 shapash>=2.4.0
 shap>=0.44.0
 
-# Already required (ensure you have these)
-flask>=2.3.0
-flask-compress>=1.13
-pandas>=1.5.0
-numpy>=1.24.0
-scikit-learn>=1.3.0
-plotly>=5.15.0
+# LLM API Integration
+requests>=2.31.0
+
+# Utilities
+python-dateutil>=2.8.0

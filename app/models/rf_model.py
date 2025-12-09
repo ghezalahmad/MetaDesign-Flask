@@ -92,88 +92,69 @@ def train_rf_model(data, input_columns, target_columns):
 
 
 def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
-    """Evaluates the Random Forest model on candidate samples, aligning output with BO structure."""
+    """Evaluates the Random Forest model using WEBSLAMD utility formula."""
 
     labeled_data = data.dropna(subset=target_columns)
-    # Changed condition to match what the Bayesian optimizer expects (any target is null)
     candidate_df = data[data[target_columns[0]].isnull()].copy()
 
     if candidate_df.empty:
         return pd.DataFrame()
 
-    # 1. Ensure model is trained (RF is trained once, unlike MAML)
     if not getattr(model, 'is_trained', False):
         print("evaluate_rf_model: Model untrained. Training now...")
         model.train(data, input_columns, target_columns)
 
-
-    train_inputs = labeled_data[input_columns]
-    train_targets = labeled_data[target_columns].values
     candidate_inputs = candidate_df[input_columns]
     
-    # 2. Run Bayesian Optimization to get Utility Scores
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=weights,
-        max_or_min=max_or_min,
-        curiosity=curiosity,
-        acquisition="UCB",
-        strategy="weighted_sum",
-        surrogate_model=model,
-        input_columns=input_columns
-    )
-
-    # 3. Get Predictions explicitly to fill DataFrame columns
+    # 1. Get Predictions and Uncertainties
     predictions, uncertainties, _ = model.predict_with_uncertainty(candidate_inputs)
     
-    # 4. Map Predictions and Uncertainties to columns
+    # 2. Map Predictions and Uncertainties to columns
     for i, col in enumerate(target_columns):
-        # Predictions
         candidate_df[col] = predictions[:, i]
-            
-        # Uncertainties 
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 5. Assign Utility Scores
-    if utility_scores is None:
-        candidate_df["Utility"] = 0.0
-    else:
-        utility_scores = np.array(utility_scores, dtype=np.float64).flatten()
-        # Safety truncation
-        n = min(len(utility_scores), len(candidate_df))
-        if len(utility_scores) != len(candidate_df):
-            candidate_df = candidate_df.iloc[:n].copy()
-            utility_scores = utility_scores[:n]
-        candidate_df["Utility"] = utility_scores
-
+    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    
+    preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        
+        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
+        
+        if max_or_min[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        
+        preds_norm[:, i] *= weights[i]
+        unc_norm[:, i] = uncertainties[:, i] / std_val
+        unc_norm[:, i] *= weights[i]
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
-    # 6. Calculate Aggregate Uncertainty (Mean of target uncertainties)
+    # 4. Calculate Aggregate Uncertainty
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
-    # 7. Calculate Novelty (Requires the utility function to be provided or calculated here)
-    # Placeholder for Novelty (assuming calculation is elsewhere or using a simpler proxy)
-    # The MAML code uses this:
-    # X_candidate_np = candidate_inputs.values
-    # X_labeled_np = labeled_data[input_columns].values
-    # novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
-    # candidate_df["Novelty"] = novelty_scores
-    candidate_df["Novelty"] = candidate_df["Uncertainty"] # Using uncertainty as novelty proxy
+    # 5. Calculate Novelty
+    X_candidate_np = candidate_inputs.values
+    X_labeled_np = labeled_data[input_columns].values
+    from app.utils.utils import calculate_novelty
+    novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
+    candidate_df["Novelty"] = novelty_scores
 
-    # 8. Exploration / Exploitation
-    candidate_df["Exploration"] = candidate_df["Uncertainty"] * (1.0 + curiosity)
-    # Note: Exploitation usually refers to the mean utility score, or mean target prediction.
-    candidate_df["Exploitation"] = candidate_df[target_columns].mean(axis=1) # Using mean prediction as proxy
-
-    # 9. Selection Flag
+    # 6. Selection Flag
     candidate_df["Selected for Testing"] = False
     if not candidate_df["Utility"].empty:
         max_utility_idx = candidate_df["Utility"].idxmax()
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
-    # 10. Final Sort
+    # 7. Final Sort
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
 
     return result_df

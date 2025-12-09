@@ -50,16 +50,12 @@ class PlotGenerator:
             
         df = df.copy()
         
-        # SLAMD APPROACH: Exclude specific columns, keep everything else
-        exclude_columns = ['Row number', 'Utility', 'is_train_data', 'Uncertainty']
+        # WEBSLAMD APPROACH: Use ONLY input_columns (features), NOT targets
+        # This is critical - if targets are included, labelled rows cluster together
+        # because predicted rows have NaN values that get filled to 0
         
-        # Also exclude any uncertainty columns
-        exclude_columns.extend([col for col in df.columns if col.startswith('Uncertainty (')])
-        
-        # Get all numeric columns that aren't excluded
-        feature_columns = [col for col in df.columns 
-                          if col not in exclude_columns 
-                          and pd.api.types.is_numeric_dtype(df[col])]
+        # Filter to only columns that exist in the dataframe
+        feature_columns = [col for col in input_columns if col in df.columns]
         
         # Need at least 1 feature and 3 samples for TSNE
         if not feature_columns or len(df) < 3:
@@ -188,11 +184,16 @@ class PlotGenerator:
 
 
     @classmethod
-    def create_tsne_input_space_plot(cls, df: pd.DataFrame, input_columns):
+    def create_tsne_input_space_plot(cls, df: pd.DataFrame, input_columns, mode=None):
         """
         Create TSNE plot following SLAMD's visual style.
         Expects df to already have 'tsne-2d-one' and 'tsne-2d-two' columns.
-        OPTIMIZED: Handles large datasets efficiently.
+        
+        Args:
+            df: DataFrame with data
+            input_columns: List of input column names
+            mode: Optional - "ML_MODE", "LLM_AGENT_MODE", or "HYBRID_MODE"
+                  If not provided, will attempt to detect from data
         """
         if df is None or df.empty:
             return {'data': [], 'layout': {'title': 'No data available'}}
@@ -205,82 +206,126 @@ class PlotGenerator:
             df["Utility"] = 0.0
         df["Utility"] = pd.to_numeric(df["Utility"], errors="coerce").fillna(0)
 
-        # CHECK: Do we have TSNE coords?
         if 'tsne-2d-one' not in df.columns or 'tsne-2d-two' not in df.columns:
             print("⚠️ TSNE PLOT: Missing coordinates")
             return {'data': [], 'layout': {'title': 'TSNE coordinates missing'}}
         
-        # Convert to native Python types (CRITICAL for JSON serialization)
+        # Determine visualization mode
+        if mode is not None:
+            # Use explicitly provided mode
+            is_llm_mode = (mode == "LLM_AGENT_MODE")
+            print(f"📊 TSNE: Using explicit mode: {mode}")
+        else:
+            # Fallback: detect from data (Predicted column is all NaN)
+            is_llm_mode = False
+            if 'Predicted' in df.columns:
+                predicted = pd.to_numeric(df['Predicted'], errors='coerce')
+                if predicted.isna().all():
+                    is_llm_mode = True
+            else:
+                is_llm_mode = True
+        
         tsne_x = [float(x) for x in df['tsne-2d-one'].values]
         tsne_y = [float(y) for y in df['tsne-2d-two'].values]
         utility_values = [float(u) for u in df["Utility"].values]
         row_numbers = [int(r) for r in df["Row number"].values]
 
-        # Separate train vs test data
-        is_train = df.get('is_train_data', pd.Series([True] * len(df)))
-        
         fig = go.Figure()
         
-        # Plot test/unknown points (suggestions)
-        test_indices = [i for i, val in enumerate(is_train) if not val]
-        if test_indices:
-            fig.add_trace(go.Scatter(
-                x=[tsne_x[i] for i in test_indices],
-                y=[tsne_y[i] for i in test_indices],
-                mode='markers',
-                name='Suggestions',
-                marker=dict(
-                    size=8,
-                    color=[utility_values[i] for i in test_indices],
-                    colorscale='Turbo',
-                    showscale=True,
-                    colorbar=dict(title="Utility"),
-                    line=dict(color='black', width=0.5),
-                    symbol='cross'
-                ),
-                customdata=[[row_numbers[i]] for i in test_indices],
-                hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<br>Utility: %{marker.color:.2f}<extra></extra>"
-            ))
-        
-        # Plot training points
-        train_indices = [i for i, val in enumerate(is_train) if val]
-        if train_indices:
-            fig.add_trace(go.Scatter(
-                x=[tsne_x[i] for i in train_indices],
-                y=[tsne_y[i] for i in train_indices],
-                mode='markers',
-                name='Training Data',
-                marker=dict(
-                    size=7,
-                    color=[utility_values[i] for i in train_indices],
-                    colorscale='Turbo',
-                    showscale=False,
-                    line=dict(color='black', width=0.5),
-                    symbol='circle'
-                ),
-                customdata=[[row_numbers[i]] for i in train_indices],
-                hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<br>Utility: %{marker.color:.2f}<extra></extra>"
-            ))
+        if is_llm_mode:
+            print("📊 TSNE: Using LLM mode visualization")
+            is_train = df.get('is_train_data', pd.Series([False] * len(df)))
+            selected = df.get('Selected for Testing', pd.Series([False] * len(df)))
+            
+            # Unlabeled candidates (gray)
+            unlabeled_idx = [i for i in range(len(df)) 
+                           if not is_train.iloc[i] and not selected.iloc[i]]
+            if unlabeled_idx:
+                fig.add_trace(go.Scatter(
+                    x=[tsne_x[i] for i in unlabeled_idx],
+                    y=[tsne_y[i] for i in unlabeled_idx],
+                    mode='markers', name='Unlabeled Candidates',
+                    marker=dict(size=6, color='#CCCCCC', symbol='cross',
+                               line=dict(color='#999999', width=0.5)),
+                    customdata=[[row_numbers[i]] for i in unlabeled_idx],
+                    hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<extra>Candidate</extra>"
+                ))
+            
+            # Labeled experiments (green)
+            labeled_idx = [i for i in range(len(df)) if is_train.iloc[i]]
+            if labeled_idx:
+                fig.add_trace(go.Scatter(
+                    x=[tsne_x[i] for i in labeled_idx],
+                    y=[tsne_y[i] for i in labeled_idx],
+                    mode='markers', name='Labeled Experiments',
+                    marker=dict(size=10, color='#28a745', symbol='circle',
+                               line=dict(color='#1e7e34', width=1)),
+                    customdata=[[row_numbers[i]] for i in labeled_idx],
+                    hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<extra>Labeled</extra>"
+                ))
+            
+            # LLM-selected point (red star)
+            selected_idx = [i for i in range(len(df)) if selected.iloc[i]]
+            if selected_idx:
+                fig.add_trace(go.Scatter(
+                    x=[tsne_x[i] for i in selected_idx],
+                    y=[tsne_y[i] for i in selected_idx],
+                    mode='markers', name='LLM Selected',
+                    marker=dict(size=18, color='#dc3545', symbol='star',
+                               line=dict(color='#721c24', width=2)),
+                    customdata=[[row_numbers[i]] for i in selected_idx],
+                    hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<extra>🤖 LLM Selected</extra>"
+                ))
+            
+            title = "t-SNE Material Space: LLM Agent Selection"
+        else:
+            # Standard ML mode - WEBSLAMD style
+            is_train = df.get('is_train_data', pd.Series([True] * len(df)))
+            
+            # WEBSLAMD: Predicted points (circle) first, then Labelled (cross)
+            predicted_indices = [i for i, val in enumerate(is_train) if not val]
+            if predicted_indices:
+                fig.add_trace(go.Scatter(
+                    x=[tsne_x[i] for i in predicted_indices],
+                    y=[tsne_y[i] for i in predicted_indices],
+                    mode='markers', name='Predicted',
+                    marker=dict(size=7, color=[utility_values[i] for i in predicted_indices],
+                               colorscale='Plasma', showscale=True,
+                               colorbar=dict(title="Utility"),
+                               symbol='circle'),
+                    customdata=[[row_numbers[i]] for i in predicted_indices],
+                    hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<br>Utility: %{marker.color:.2f}<extra></extra>"
+                ))
+            
+            # WEBSLAMD: Labelled points (cross/plus)
+            labelled_indices = [i for i, val in enumerate(is_train) if val]
+            if labelled_indices:
+                fig.add_trace(go.Scatter(
+                    x=[tsne_x[i] for i in labelled_indices],
+                    y=[tsne_y[i] for i in labelled_indices],
+                    mode='markers', name='Labelled',
+                    marker=dict(size=8, color=[utility_values[i] for i in labelled_indices],
+                               colorscale='Plasma', showscale=False,
+                               symbol='cross', line=dict(width=1)),
+                    customdata=[[row_numbers[i]] for i in labelled_indices],
+                    hovertemplate="Row: %{customdata[0]}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<br>Utility: %{marker.color:.2f}<extra></extra>"
+                ))
+            
+            title = "Materials data in t-SNE coordinates: train data and targets"
 
+        # WEBSLAMD-style layout
         fig.update_layout(
-            title="t-SNE Material Space: Training Data and Suggestions",
-            xaxis_title="t-SNE-1",
-            yaxis_title="t-SNE-2",
-            plot_bgcolor="#f7f7f7",
-            paper_bgcolor="#f7f7f7",
-            margin=dict(l=60, r=40, t=60, b=60),
-            height=1000,
-            xaxis=dict(showgrid=True, gridcolor="#cccccc"),
-            yaxis=dict(showgrid=True, gridcolor="#cccccc"),
-            legend=dict(
-                yanchor='top',
-                y=0.99,
-                xanchor='left',
-                x=0.01
-            )
+            title=title,
+            xaxis_title="t-SNE-1", yaxis_title="t-SNE-2",
+            plot_bgcolor="lavender", paper_bgcolor="lavender",
+            margin=dict(l=60, r=40, t=60, b=60), height=1000,
+            xaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=False),
+            legend=dict(yanchor='top', y=0.99, xanchor='left', x=0.01)
         )
 
         return fig.to_dict()
+
 
 
     # ======================================================
@@ -459,6 +504,169 @@ class PlotGenerator:
             paper_bgcolor="#f7f7f7",
             margin=dict(l=60, r=40, t=60, b=60),
             xaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            yaxis=dict(showgrid=True, gridcolor="#cccccc"),
+        )
+        
+        return fig.to_dict()
+
+    # ======================================================
+    #   TRAJECTORY VISUALIZATION (LLM-AL Paper Feature)
+    # ======================================================
+    @classmethod
+    def create_trajectory_plot(cls, df: pd.DataFrame, trajectory_data: dict, input_columns):
+        """
+        Visualize exploration trajectory overlaid on TSNE space.
+        
+        Shows the path the active learning agent takes through the feature space,
+        as described in the LLM-AL paper.
+        """
+        if df is None or df.empty:
+            return {'data': [], 'layout': {'title': 'No data available'}}
+            
+        if 'tsne-2d-one' not in df.columns or 'tsne-2d-two' not in df.columns:
+            return {'data': [], 'layout': {'title': 'TSNE coordinates required'}}
+        
+        trajectory = trajectory_data.get('trajectory', [])
+        
+        if len(trajectory) < 1:
+            return {'data': [], 'layout': {'title': 'No trajectory data yet'}}
+        
+        fig = go.Figure()
+        
+        # Background: all points (gray, transparent)
+        tsne_x = [float(x) for x in df['tsne-2d-one'].values]
+        tsne_y = [float(y) for y in df['tsne-2d-two'].values]
+        
+        fig.add_trace(go.Scatter(
+            x=tsne_x, y=tsne_y,
+            mode='markers',
+            name='Design Space',
+            marker=dict(size=4, color='#CCCCCC', opacity=0.3),
+            hoverinfo='skip'
+        ))
+        
+        # Get trajectory point coordinates
+        # Match trajectory points to TSNE coordinates
+        traj_x, traj_y, traj_labels = [], [], []
+        
+        for point in trajectory:
+            row_idx = point.get('row_index')
+            if row_idx is not None and row_idx in df.index:
+                traj_x.append(float(df.loc[row_idx, 'tsne-2d-one']))
+                traj_y.append(float(df.loc[row_idx, 'tsne-2d-two']))
+                traj_labels.append(f"Iter {point['iteration']} ({point['mode']})")
+        
+        if len(traj_x) >= 2:
+            # Draw trajectory path (lines)
+            fig.add_trace(go.Scatter(
+                x=traj_x, y=traj_y,
+                mode='lines',
+                name='Trajectory Path',
+                line=dict(color='#0077B6', width=2, dash='solid'),
+                hoverinfo='skip'
+            ))
+        
+        if len(traj_x) >= 1:
+            # Draw trajectory points with gradient colors
+            colors = list(range(len(traj_x)))
+            
+            fig.add_trace(go.Scatter(
+                x=traj_x, y=traj_y,
+                mode='markers+text',
+                name='Selected Points',
+                marker=dict(
+                    size=15,
+                    color=colors,
+                    colorscale='Blues',
+                    showscale=True,
+                    colorbar=dict(title="Iteration"),
+                    line=dict(color='#023E8A', width=2)
+                ),
+                text=[str(i+1) for i in range(len(traj_x))],
+                textposition='top center',
+                textfont=dict(size=10, color='#023E8A'),
+                customdata=traj_labels,
+                hovertemplate="%{customdata}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<extra></extra>"
+            ))
+        
+        # Highlight start and end
+        if len(traj_x) >= 1:
+            fig.add_trace(go.Scatter(
+                x=[traj_x[0]], y=[traj_y[0]],
+                mode='markers',
+                name='Start',
+                marker=dict(size=20, color='#2ECC71', symbol='circle',
+                           line=dict(color='#1E8449', width=2))
+            ))
+        
+        if len(traj_x) >= 2:
+            fig.add_trace(go.Scatter(
+                x=[traj_x[-1]], y=[traj_y[-1]],
+                mode='markers',
+                name='Current',
+                marker=dict(size=20, color='#E74C3C', symbol='star',
+                           line=dict(color='#922B21', width=2))
+            ))
+        
+        total_distance = trajectory_data.get('total_distance', 0)
+        
+        fig.update_layout(
+            title=f"Exploration Trajectory (Cumulative Distance: {total_distance:.2f})",
+            xaxis_title="t-SNE-1",
+            yaxis_title="t-SNE-2",
+            plot_bgcolor="#f7f7f7",
+            paper_bgcolor="#f7f7f7",
+            margin=dict(l=60, r=40, t=60, b=60),
+            xaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            yaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            legend=dict(yanchor='top', y=0.99, xanchor='left', x=0.01)
+        )
+        
+        return fig.to_dict()
+
+    @classmethod
+    def create_distance_plot(cls, trajectory_data: dict):
+        """
+        Plot cumulative distance traveled over iterations.
+        
+        Implements visualization from LLM-AL paper showing how different
+        algorithms navigate the search space.
+        """
+        trajectory = trajectory_data.get('trajectory', [])
+        distances = trajectory_data.get('cumulative_distances', [])
+        
+        if len(trajectory) < 2:
+            return {'data': [], 'layout': {'title': 'Need at least 2 iterations'}}
+        
+        iterations = [p['iteration'] for p in trajectory]
+        modes = [p['mode'] for p in trajectory]
+        
+        # Create hover text
+        hover_text = [f"Iter {i}: {m}<br>Distance: {d:.3f}" 
+                     for i, m, d in zip(iterations, modes, distances)]
+        
+        fig = go.Figure()
+        
+        # Main line
+        fig.add_trace(go.Scatter(
+            x=iterations,
+            y=distances,
+            mode='lines+markers',
+            name='Cumulative Distance',
+            line=dict(color='#0077B6', width=3),
+            marker=dict(size=10, color='#0077B6'),
+            text=hover_text,
+            hoverinfo='text'
+        ))
+        
+        fig.update_layout(
+            title="Cumulative Distance in Feature Space",
+            xaxis_title="Iteration",
+            yaxis_title="Cumulative Distance (Standardized)",
+            plot_bgcolor="#f7f7f7",
+            paper_bgcolor="#f7f7f7",
+            margin=dict(l=60, r=40, t=60, b=60),
+            xaxis=dict(showgrid=True, gridcolor="#cccccc", dtick=1),
             yaxis=dict(showgrid=True, gridcolor="#cccccc"),
         )
         

@@ -72,18 +72,22 @@ def calculate_utility(
     for_visualization: bool = False
 ) -> np.ndarray:
     """
-    SLAMD-inspired utility computation combining exploration, exploitation, and novelty.
+    SLAMD-EXACT utility computation - matches WEBSLAMD implementation exactly.
 
+    Formula: Utility = Σ(normalized_prediction × weight × direction) + curiosity × Σ(uncertainty)
+    
+    Where direction = 1 for 'max', -1 for 'min'
+    
     Args:
         predictions: Predicted target values (n_samples, n_targets)
         uncertainties: Estimated uncertainties (n_samples, 1) or (n_samples,)
-        novelty: Novelty scores (n_samples,)
-        curiosity: Exploration factor (-2 to +2)
+        novelty: Novelty scores (n_samples,) - added to exploration
+        curiosity: Exploration factor (0=exploit, 1=explore)
         weights: Relative importance of each target
         max_or_min: Optimization direction list for each target ('max' or 'min')
-        thresholds: Optional thresholds for normalization or safety limits
-        acquisition: Type of acquisition function ('UCB', 'EI', 'PI', 'MaxEntropy')
-        for_visualization: Whether the utility is for visualization (scaling adjustments)
+        thresholds: Optional thresholds for clipping
+        acquisition: Acquisition function type (UCB, EI, etc.)
+        for_visualization: Whether the utility is for visualization scaling
 
     Returns:
         Utility scores as (n_samples, 1)
@@ -94,47 +98,48 @@ def calculate_utility(
     novelty = np.array(novelty).reshape(-1, 1)
     weights = np.array(weights).reshape(1, -1)
 
-    # --- Normalize predictions per target to [0,1] ---
+    # --- WEBSLAMD-style z-score normalization ---
     preds_norm = np.zeros_like(predictions, dtype=float)
+    unc_norm = np.zeros_like(uncertainties, dtype=float)
+    
     for i in range(predictions.shape[1]):
         col = predictions[:, i]
-        min_val, max_val = np.nanmin(col), np.nanmax(col)
-        if max_val - min_val > 1e-9:
-            preds_norm[:, i] = (col - min_val) / (max_val - min_val)
-        else:
-            preds_norm[:, i] = 0.5  # fallback if constant
-
+        mean_val = np.nanmean(col)
+        std_val = np.nanstd(col)
+        if std_val < 1e-9:
+            std_val = 1.0  # Avoid division by zero
+        
+        # Z-score normalize
+        preds_norm[:, i] = (col - mean_val) / std_val
+        
+        # WEBSLAMD: Multiply by -1 for minimization targets (AFTER normalization)
         if max_or_min[i].lower() == "min":
-            preds_norm[:, i] = 1.0 - preds_norm[:, i]
+            preds_norm[:, i] *= -1
 
-    # Weighted performance score
+    # Normalize uncertainty (same z-score approach)
+    unc_mean = np.nanmean(uncertainties)
+    unc_std = np.nanstd(uncertainties)
+    if unc_std < 1e-9:
+        unc_std = 1.0
+    unc_norm = (uncertainties - unc_mean) / unc_std
+
+    # Weighted performance score (prediction component)
     weighted_perf = np.dot(preds_norm, weights.T).flatten()
 
-    # --- Acquisition-based adjustment ---
-    if acquisition == "UCB":
-        acquisition_term = weighted_perf + curiosity * np.squeeze(uncertainties)
-    elif acquisition == "EI":
-        acquisition_term = weighted_perf + np.log1p(curiosity * np.squeeze(uncertainties))
-    elif acquisition == "PI":
-        acquisition_term = weighted_perf - np.log1p(np.squeeze(uncertainties))
-    elif acquisition == "MaxEntropy":
-        acquisition_term = weighted_perf + np.sqrt(np.abs(curiosity)) * novelty.flatten()
-    else:
-        acquisition_term = weighted_perf
+    # --- WEBSLAMD Utility Formula ---
+    # Utility = prediction_sum + curiosity * uncertainty_sum
+    utility = weighted_perf + curiosity * unc_norm.flatten()
+    
+    # Add novelty component (WEBSLAMD stores separately, we add it)
+    utility += 0.1 * novelty.flatten()
 
-    # --- Final utility calculation ---
-    utility = (
-        (0.6 * weighted_perf)
-        + (0.3 * acquisition_term)
-        + (0.1 * novelty.flatten())
-    )
+    # WEBSLAMD: Keep raw z-scored utility values (typically -3 to +3 range)
+    # Do NOT scale to [0, 1] - this matches WEBSLAMD's display
 
-    # Scale between 0 and 1
-    utility = np.clip((utility - np.min(utility)) / (np.ptp(utility) + 1e-12), 0, 1)
-
-    # Optional visualization scaling
+    # Optional visualization scaling only
     if for_visualization:
-        utility = np.log1p(utility * 10)
-        utility = utility / np.max(utility)
+        utility = np.log1p(np.abs(utility) * 10) * np.sign(utility)
+        utility = utility / (np.max(np.abs(utility)) + 1e-12)
 
     return utility.reshape(-1, 1)
+

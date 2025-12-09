@@ -3,56 +3,6 @@
 //  + LOCALSTORAGE CACHING & RESTORE
 // ==========================================================
 
-// Helper function to show error modal popup
-function showErrorModal(title, message, allErrors = []) {
-    // Remove any existing modal
-    const existingModal = document.getElementById('error-modal');
-    if (existingModal) existingModal.remove();
-
-    // Build error list HTML if there are multiple errors
-    let errorListHtml = '';
-    if (allErrors.length > 1) {
-        errorListHtml = '<ul class="mb-0 mt-2">';
-        allErrors.forEach(err => {
-            errorListHtml += `<li>${err}</li>`;
-        });
-        errorListHtml += '</ul>';
-    }
-
-    // Create modal HTML
-    const modalHtml = `
-        <div class="modal fade" id="error-modal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content bg-white">
-                    <div class="modal-header bg-danger text-white">
-                        <h5 class="modal-title">
-                            <i class="bi bi-exclamation-triangle me-2"></i>${title}
-                        </h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body text-dark">
-                        <p class="mb-0">${message}</p>
-                        ${errorListHtml}
-                    </div>
-                    <div class="modal-footer bg-light">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    // Add to DOM and show
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-    const modal = new bootstrap.Modal(document.getElementById('error-modal'));
-    modal.show();
-
-    // Clean up when hidden
-    document.getElementById('error-modal').addEventListener('hidden.bs.modal', function () {
-        this.remove();
-    });
-}
-
 document.addEventListener("DOMContentLoaded", () => {
     // ----- DOM ELEMENTS -----
     const csvUpload = document.getElementById("csv-upload");
@@ -60,18 +10,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const datasetTableBody = document.getElementById("dataset-table-body");
 
     const inputColumns = document.getElementById("input-columns");
+    const aprioriColumns = document.getElementById("apriori-columns");
     const targetContainer = document.getElementById("target-properties-container");
-    const aprioriContainer = document.getElementById("apriori-properties-container");
-    const addAprioriButton = document.getElementById("add-apriori-property-button");
 
     const modelSelect = document.getElementById("model-select");
-    const modelHelpButton = document.getElementById("model-help-button");
+    const modelHelpButton = document.getElementById("model-help-button"); 
     const curiositySlider = document.getElementById("curiosity-slider");
-    const curiosityValueDisplay = document.getElementById("curiosity-value-display");
-    const curiosityGuidanceText = document.getElementById("curiosity-guidance-text");
+    const curiosityValueDisplay = document.getElementById("curiosity-value-display"); 
+    const curiosityGuidanceText = document.getElementById("curiosity-guidance-text"); 
 
     const runButton = document.getElementById("run-experiment-button");
-    const runLLMButton = document.getElementById("run-llm-experiment-button");
     const resultsSection = document.getElementById("results-section");
     const resultsTableContainer = document.getElementById("results-table-container");
     const addTargetButton = document.getElementById("add-target-property-button");
@@ -79,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Existing Plot Divs
     const tsnePlotDiv = document.getElementById("tsne-plot");
     const scatterPlotDiv = document.getElementById("scatter-plot");
-
+    
     // NEW Plot Divs
     const uncertaintyPlotDiv = document.getElementById("uncertainty-plot");
     const historyPlotDiv = document.getElementById("history-plot");
@@ -88,10 +36,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ----- STATE VARIABLES -----
     // ----- STATE VARIABLES -----
-    let allColumns = [];
-    let uploadedDatasets = [];
+    let allColumns = []; 
+    let uploadedDatasets = []; 
     let experimentData = null;
-    let resultsDataTable = null;
+    let resultsDataTable = null; 
     let shapashData = null; // Store explainability data
 
     // ----- MODEL DESCRIPTIONS (Keep as is) -----
@@ -184,12 +132,12 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
             modelHelpButton.setAttribute('data-bs-original-title', info.name);
             modelHelpButton.setAttribute('data-bs-content', content);
-
-            popover.dispose();
-            new bootstrap.Popover(modelHelpButton, {
+            
+            popover.dispose(); 
+            new bootstrap.Popover(modelHelpButton, { 
                 html: true,
                 sanitize: false,
-                trigger: 'focus'
+                trigger: 'focus' 
             });
         }
     }
@@ -197,7 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
     modelSelect.addEventListener("change", (event) => {
         const selectedValue = event.target.value;
         updateModelPopover(selectedValue);
-        modelHelpButton.click();
+        modelHelpButton.click(); 
         modelHelpButton.focus();
     });
 
@@ -219,280 +167,10 @@ document.addEventListener("DOMContentLoaded", () => {
             curiosityGuidanceText.textContent = "Heavy EXPLORATION: Strongly focused on uncertainty. Will primarily seek information in completely unknown areas, essential for discovering novel material classes.";
         }
     });
-
+    
     curiositySlider.dispatchEvent(new Event('input'));
 
     // ==========================================================
-    //  ACTIVE LEARNING SETTINGS LOGIC
-    // ==========================================================
-    const modeRadios = document.getElementsByName('al_mode');
-    const llmPanel = document.getElementById('llm-settings-panel');
-    const hybridPanel = document.getElementById('hybrid-settings-panel');
-    const mlOptionsPanel = document.getElementById('ml-options-panel');
-    const llmOptionsPanel = document.getElementById('llm-options-panel');
-
-    function updateSettingsVisibility() {
-        // Find checked mode
-        let mode = "ML_MODE";
-        for (const r of modeRadios) {
-            if (r.checked) mode = r.value;
-        }
-
-        if (mode === "ML_MODE") {
-            // ML Only mode: Show ML options, hide LLM settings
-            if (llmPanel) llmPanel.style.display = "none";
-            if (hybridPanel) hybridPanel.style.display = "none";
-            if (mlOptionsPanel) mlOptionsPanel.style.display = "block";
-            if (llmOptionsPanel) llmOptionsPanel.style.display = "none";
-        } else if (mode === "LLM_AGENT_MODE") {
-            // LLM Only mode: Show LLM settings and LLM options, hide ML options
-            if (llmPanel) llmPanel.style.display = "block";
-            if (hybridPanel) hybridPanel.style.display = "none";
-            if (mlOptionsPanel) mlOptionsPanel.style.display = "none";
-            if (llmOptionsPanel) llmOptionsPanel.style.display = "block";
-        } else if (mode === "HYBRID_MODE") {
-            // Hybrid mode: Show both LLM and ML options
-            if (llmPanel) llmPanel.style.display = "block";
-            if (hybridPanel) hybridPanel.style.display = "block";
-            if (mlOptionsPanel) mlOptionsPanel.style.display = "block";
-            if (llmOptionsPanel) llmOptionsPanel.style.display = "none";
-        }
-    }
-
-    // Load settings from server on page load
-    function loadSettings() {
-        fetch('/api/settings')
-            .then(r => r.json())
-            .then(data => {
-                if (data.success && data.settings) {
-                    const s = data.settings;
-
-                    // Apply mode
-                    if (s.active_learning_mode) {
-                        for (const r of modeRadios) {
-                            r.checked = (r.value === s.active_learning_mode);
-                        }
-                    }
-
-                    // Apply prompt style
-                    if (s.prompt_style) {
-                        const styleRadios = document.getElementsByName('prompt_style');
-                        for (const r of styleRadios) {
-                            r.checked = (r.value === s.prompt_style);
-                        }
-                    }
-
-                    // Apply hybrid weights
-                    if (s.hybrid_weights) {
-                        const wLlm = document.getElementById('w_llm');
-                        const wMl = document.getElementById('w_ml');
-                        if (wLlm) wLlm.value = s.hybrid_weights.w_llm || 0.5;
-                        if (wMl) wMl.value = s.hybrid_weights.w_ml || 0.5;
-                    }
-
-                    // Apply Ollama model selection
-                    const modelSelect = document.getElementById('ollama_model');
-                    if (modelSelect && s.ollama_model) {
-                        modelSelect.value = s.ollama_model;
-                    }
-
-                    // Apply LLM provider selection
-                    if (s.llm_provider) {
-                        const providerRadios = document.getElementsByName('llm_provider');
-                        for (const r of providerRadios) {
-                            r.checked = (r.value === s.llm_provider);
-                        }
-                    }
-
-                    // Apply Mistral API key
-                    const apiKeyInput = document.getElementById('mistral_api_key');
-                    if (apiKeyInput && s.mistral_api_key) {
-                        apiKeyInput.value = s.mistral_api_key;
-                    }
-
-                    // Restore previously uploaded dataset
-                    if (s.current_dataset && s.current_dataset_columns) {
-                        const existingDataset = uploadedDatasets.find(d => d.filename === s.current_dataset);
-                        if (!existingDataset) {
-                            const restoredDataset = {
-                                filename: s.current_dataset,
-                                columns: s.current_dataset_columns,
-                                isActive: true
-                            };
-                            uploadedDatasets.push(restoredDataset);
-                            const newIndex = uploadedDatasets.length - 1;
-                            addDatasetRow(restoredDataset, newIndex);
-                            handleDatasetSelection(newIndex);
-                            console.log("📂 Restored dataset:", s.current_dataset);
-                        }
-                    }
-
-                    updateSettingsVisibility();
-                    console.log("✅ Settings loaded from server");
-                }
-            })
-            .catch(err => console.warn("⚠️ Could not load settings:", err));
-    }
-
-    // Save settings to server
-    function saveSettings() {
-        let mode = "ML_MODE";
-        for (const r of modeRadios) {
-            if (r.checked) mode = r.value;
-        }
-
-        let promptStyle = "parameter-format";
-        const styleRadios = document.getElementsByName('prompt_style');
-        for (const r of styleRadios) {
-            if (r.checked) promptStyle = r.value;
-        }
-
-        // Get LLM provider
-        let llmProvider = 'ollama';
-        const providerRadios = document.getElementsByName('llm_provider');
-        for (const r of providerRadios) {
-            if (r.checked) llmProvider = r.value;
-        }
-
-        // Get LLM strategy
-        let llmStrategy = 'balanced';
-        const strategyRadios = document.getElementsByName('llm_strategy');
-        for (const r of strategyRadios) {
-            if (r.checked) llmStrategy = r.value;
-        }
-
-        const settings = {
-            active_learning_mode: mode,
-            prompt_style: promptStyle,
-            llm_provider: llmProvider,
-            llm_strategy: llmStrategy,
-            ollama_model: document.getElementById('ollama_model')?.value || 'mistral:latest',
-            mistral_api_key: document.getElementById('mistral_api_key')?.value || '',
-            hybrid_weights: {
-                w_llm: parseFloat(document.getElementById('w_llm')?.value || 0.5),
-                w_ml: parseFloat(document.getElementById('w_ml')?.value || 0.5)
-            }
-        };
-
-        fetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(settings)
-        })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    console.log("✅ Settings saved");
-                } else {
-                    console.warn("⚠️ Failed to save settings:", data.error);
-                }
-            })
-            .catch(err => console.error("❌ Error saving settings:", err));
-    }
-
-    // Attach save handlers to settings controls
-    modeRadios.forEach(r => r.addEventListener('change', () => {
-        updateSettingsVisibility();
-        saveSettings();
-        validateApiKey();
-    }));
-
-    document.getElementsByName('prompt_style').forEach(r =>
-        r.addEventListener('change', saveSettings)
-    );
-
-    document.getElementById('w_llm')?.addEventListener('change', saveSettings);
-    document.getElementById('w_ml')?.addEventListener('change', saveSettings);
-
-    // Ollama model and Mistral API key handlers
-    document.getElementById('ollama_model')?.addEventListener('change', saveSettings);
-    document.getElementById('mistral_api_key')?.addEventListener('change', () => {
-        saveSettings();
-        validateCloudApiKey();
-    });
-
-    // Provider toggle handler
-    const providerRadios = document.getElementsByName('llm_provider');
-    const ollamaSettings = document.getElementById('ollama-settings');
-    const mistralCloudSettings = document.getElementById('mistral-cloud-settings');
-
-    function updateProviderVisibility() {
-        let provider = 'ollama';
-        for (const r of providerRadios) {
-            if (r.checked) provider = r.value;
-        }
-
-        if (provider === 'ollama') {
-            if (ollamaSettings) ollamaSettings.style.display = 'flex';
-            if (mistralCloudSettings) mistralCloudSettings.style.display = 'none';
-            checkOllamaStatus();
-        } else {
-            if (ollamaSettings) ollamaSettings.style.display = 'none';
-            if (mistralCloudSettings) mistralCloudSettings.style.display = 'flex';
-            validateCloudApiKey();
-        }
-    }
-
-    providerRadios.forEach(r => r.addEventListener('change', () => {
-        updateProviderVisibility();
-        saveSettings();
-    }));
-
-    // Check Ollama status
-    function checkOllamaStatus() {
-        const statusDiv = document.getElementById('ollama-status');
-        if (!statusDiv) return;
-
-        fetch('http://localhost:11434/api/tags', { method: 'GET' })
-            .then(response => {
-                if (response.ok) return response.json();
-                throw new Error('Ollama not responding');
-            })
-            .then(data => {
-                const models = data.models?.map(m => m.name) || [];
-                statusDiv.className = 'alert alert-success py-2 mt-2';
-                statusDiv.innerHTML = `<span>✅</span> Ollama running! (${models.length} models)`;
-            })
-            .catch(err => {
-                statusDiv.className = 'alert alert-warning py-2 mt-2';
-                statusDiv.innerHTML = `<span>⚠️</span> Start Ollama: <code>ollama serve</code>`;
-            });
-    }
-
-    // Validate Cloud API key
-    function validateCloudApiKey() {
-        const apiKey = document.getElementById('mistral_api_key')?.value || '';
-        const warning = document.getElementById('api-key-warning');
-        if (!apiKey.trim()) {
-            if (warning) warning.style.display = 'block';
-        } else {
-            if (warning) warning.style.display = 'none';
-        }
-    }
-
-    // Toggle API key visibility
-    document.getElementById('toggle-api-key')?.addEventListener('click', () => {
-        const input = document.getElementById('mistral_api_key');
-        const icon = document.querySelector('#toggle-api-key i');
-        if (input.type === 'password') {
-            input.type = 'text';
-            icon?.classList.replace('bi-eye', 'bi-eye-slash');
-        } else {
-            input.type = 'password';
-            icon?.classList.replace('bi-eye-slash', 'bi-eye');
-        }
-    });
-
-    // Check Ollama status when LLM panel becomes visible
-    modeRadios.forEach(r => r.addEventListener('change', () => {
-        const mode = r.value;
-        if (mode === 'LLM_AGENT_MODE' || mode === 'HYBRID_MODE') {
-            setTimeout(updateProviderVisibility, 100);
-        }
-    }));
-
-    // Load settings on page init
-    loadSettings();
     //  DATASET MANAGEMENT (Keep as is)
     // ==========================================================
 
@@ -510,14 +188,14 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => r.json())
             .then(data => {
                 if (!data.success) return alert("Upload error: " + data.error);
-
+                
                 const newDataset = {
                     filename: data.filename,
                     columns: data.columns,
-                    isActive: false
+                    isActive: false 
                 };
                 uploadedDatasets.push(newDataset);
-
+                
                 const newIndex = uploadedDatasets.length - 1;
                 addDatasetRow(newDataset, newIndex);
 
@@ -530,20 +208,20 @@ document.addEventListener("DOMContentLoaded", () => {
     function addDatasetRow(dataset, index) {
         const tr = document.createElement("tr");
         tr.dataset.index = index;
-
+        
         tr.innerHTML = `
             <td><button class="btn btn-sm btn-danger delete-btn">Delete</button></td>
             <td>${dataset.filename}</td>
             <td>${dataset.columns.join(", ")}</td>
             <td><button class="btn btn-sm btn-primary select-btn">Select</button></td>
         `;
-
+        
         datasetTableBody.appendChild(tr);
 
         tr.querySelector(".select-btn").addEventListener("click", () => {
             handleDatasetSelection(index);
         });
-
+        
         updateTableRowStyle(index, dataset.isActive);
     }
 
@@ -555,20 +233,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const selectedDataset = uploadedDatasets[index];
         allColumns = selectedDataset.columns;
-
+        
         console.log(`✅ Dataset '${selectedDataset.filename}' selected. Available columns updated.`);
 
         inputColumns.innerHTML = '';
-        aprioriContainer.innerHTML = '';
+        aprioriColumns.innerHTML = '';
         targetContainer.innerHTML = '';
-
+        
         populateInitialSelectors();
     }
-
+    
     function updateTableRowStyle(index, isActive) {
         const row = datasetTableBody.querySelector(`tr[data-index="${index}"]`);
         const selectBtn = row?.querySelector(".select-btn");
-
+        
         if (row) {
             if (isActive) {
                 row.classList.add('table-success', 'fw-bold');
@@ -596,30 +274,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function populateInitialSelectors() {
         setSelectOptions(inputColumns, allColumns);
+        setSelectOptions(aprioriColumns, allColumns);
     }
 
-    inputColumns.addEventListener("change", updateAvailableColumns);
+    inputColumns.addEventListener("change", updateAprioriOptions);
 
-    function updateAvailableColumns() {
-        // Just trigger re-evaluation when inputs change
-        // A-priori now uses dynamic groups like targets
-    }
-
-    function getAvailableAprioriColumns() {
-        if (allColumns.length === 0) return [];
-
+    function updateAprioriOptions() {
+        if (allColumns.length === 0) return;
+        
         const selectedInputs = getSelected(inputColumns);
         const selectedTargets = Array.from(
             document.querySelectorAll("select[name='target_columns']")
         ).map(sel => sel.value);
-        const selectedApriori = Array.from(
-            document.querySelectorAll("select[name='apriori_columns']")
-        ).map(sel => sel.value);
 
-        return allColumns.filter(
-            c => !selectedInputs.includes(c) &&
-                !selectedTargets.includes(c) &&
-                !selectedApriori.includes(c)
+        const available = allColumns.filter(
+            c => !selectedInputs.includes(c) && !selectedTargets.includes(c)
+        );
+
+        setSelectOptions(
+            aprioriColumns,
+            available,
+            getSelected(aprioriColumns)
         );
     }
 
@@ -637,21 +312,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const availableColumns = allColumns.filter(
             c => !getSelected(inputColumns).includes(c)
         );
-
+        
         const currentTargets = Array.from(document.querySelectorAll(".target-group select[name='target_columns']"))
-            .map(sel => sel.value);
-
+                                    .map(sel => sel.value);
+        
         const optionsHTML = availableColumns
             .filter(c => !currentTargets.includes(c))
             .map(c => `<option value="${c}">${c}</option>`)
             .join("");
-
+            
         if (optionsHTML === "" && availableColumns.length > 0) {
-            alert("All available columns are already assigned as target properties.");
-            return;
+             alert("All available columns are already assigned as target properties.");
+             return;
         } else if (availableColumns.length === 0) {
-            alert("No columns left to be assigned as target properties.");
-            return;
+             alert("No columns left to be assigned as target properties.");
+             return;
         }
 
         wrapper.innerHTML = `
@@ -670,12 +345,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         wrapper.querySelector(".btn-danger").addEventListener("click", () => {
             wrapper.remove();
+            updateAprioriOptions();
         });
 
         wrapper.querySelector("select[name='target_columns']")
-            .addEventListener("change", () => { });
+            .addEventListener("change", updateAprioriOptions);
 
         targetContainer.appendChild(wrapper);
+        updateAprioriOptions();
     }
 
     function collectTargetConfig() {
@@ -687,154 +364,30 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================================
-    //  A-PRIORI PROPERTY GROUPS (with min/max like targets)
-    // ==========================================================
-
-    addAprioriButton.addEventListener("click", () => addAprioriGroup());
-
-    function addAprioriGroup() {
-        if (allColumns.length === 0) {
-            alert("Please upload and select a dataset first.");
-            return;
-        }
-
-        const wrapper = document.createElement("div");
-        wrapper.classList.add("mb-3", "apriori-group");
-
-        const availableColumns = getAvailableAprioriColumns();
-
-        if (availableColumns.length === 0) {
-            alert("No columns available for a-priori properties. All columns are assigned to inputs, targets, or other a-priori.");
-            return;
-        }
-
-        const optionsHTML = availableColumns
-            .map(c => `<option value="${c}">${c}</option>`)
-            .join("");
-
-        wrapper.innerHTML = `
-            <div class="input-group">
-                <select class="form-select" name="apriori_columns">
-                    ${optionsHTML}
-                </select>
-                <input type="number" class="form-control" name="apriori_weights" value="1.0" step="0.1" title="Weight">
-                <select class="form-select" name="apriori_max_or_min">
-                    <option value="max">Maximize</option>
-                    <option value="min">Minimize</option>
-                </select>
-                <button class="btn btn-danger" type="button">Remove</button>
-            </div>
-        `;
-
-        wrapper.querySelector(".btn-danger").addEventListener("click", () => {
-            wrapper.remove();
-        });
-
-        aprioriContainer.appendChild(wrapper);
-    }
-
-    function collectAprioriConfig() {
-        return Array.from(document.querySelectorAll(".apriori-group")).map(g => ({
-            name: g.querySelector("select[name='apriori_columns']").value,
-            weight: parseFloat(g.querySelector("input[name='apriori_weights']").value),
-            optimization: g.querySelector("select[name='apriori_max_or_min']").value
-        }));
-    }
+    //  RUN EXPERIMENT 
     // ==========================================================
 
     runButton.addEventListener("click", runExperiment);
 
-    // LLM Run button uses same experiment logic (mode is determined by settings)
-    if (runLLMButton) {
-        runLLMButton.addEventListener("click", runExperiment);
-    }
-
-    // LLM Strategy toggle - update description
-    const llmStrategyRadios = document.getElementsByName('llm_strategy');
-    const llmStrategyDesc = document.getElementById('llm-strategy-description');
-
-    llmStrategyRadios.forEach(radio => {
-        radio.addEventListener('change', () => {
-            const descriptions = {
-                'balanced': 'Balanced: LLM decides the best approach based on context.',
-                'explore': 'Explore: Prioritize diversity and unexplored regions.',
-                'exploit': 'Exploit: Focus on refining high-performing candidates.'
-            };
-            if (llmStrategyDesc) {
-                llmStrategyDesc.textContent = descriptions[radio.value] || '';
-            }
-            saveSettings();
-        });
-    });
-
-    // Clear Trajectory button handler
-    const clearTrajectoryBtn = document.getElementById('clear-trajectory-btn');
-    if (clearTrajectoryBtn) {
-        clearTrajectoryBtn.addEventListener('click', () => {
-            if (confirm('Clear trajectory history? This will reset the exploration path visualization.')) {
-                fetch('/api/trajectory', { method: 'DELETE' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            // Clear the plots
-                            const trajectoryPlot = document.getElementById('trajectory-plot');
-                            const distancePlot = document.getElementById('distance-plot');
-                            if (trajectoryPlot) trajectoryPlot.innerHTML = '<p class="text-muted text-center mt-5">No trajectory data. Run experiments to see the path.</p>';
-                            if (distancePlot) distancePlot.innerHTML = '';
-
-                            // Reset stats
-                            document.getElementById('stat-iterations').textContent = '0';
-                            document.getElementById('stat-distance').textContent = '0.00';
-
-                            console.log('✅ Trajectory cleared');
-                        }
-                    })
-                    .catch(err => console.error('Failed to clear trajectory:', err));
-            }
-        });
-    }
-
-
     function runExperiment() {
         const selectedInputs = getSelected(inputColumns);
         const targets = collectTargetConfig();
-        const apriori = collectAprioriConfig();
 
         if (selectedInputs.length === 0 || targets.length === 0) {
             return alert("Please select input and target columns.");
         }
-
+        
         const activeDataset = uploadedDatasets.find(d => d.isActive);
         if (!activeDataset) {
             return alert("No dataset is currently selected. Please select one from the table.");
         }
-
-        // Collect Settings
-        let mode = "ML_MODE";
-        for (const r of modeRadios) {
-            if (r.checked) mode = r.value;
-        }
-
-        // Prompt Style
-        let promptStyle = "parameter-format";
-        const styleRadios = document.getElementsByName('prompt_style');
-        for (const r of styleRadios) {
-            if (r.checked) promptStyle = r.value;
-        }
-
-        const w_llm = parseFloat(document.getElementById('w_llm')?.value || 0.5);
-        const w_ml = parseFloat(document.getElementById('w_ml')?.value || 0.5);
 
         const payload = {
             model: modelSelect.value,
             curiosity: curiositySlider.value,
             dataset_filename: activeDataset.filename,
             input_columns: selectedInputs,
-            target_columns: targets,
-            apriori_columns: apriori,
-            active_learning_mode: mode,
-            prompt_style: promptStyle,
-            hybrid_weights: { w_llm, w_ml }
+            target_columns: targets
         };
 
         console.log("🚀 Sending experiment request:", payload);
@@ -842,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // === IMPROVED LOADING INDICATOR ===
         runButton.disabled = true;
         runButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
-
+        
         // Show detailed progress
         resultsSection.style.display = "block";
         resultsTableContainer.innerHTML = `
@@ -872,23 +425,23 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => {
                 const duration = ((Date.now() - startTime) / 1000).toFixed(1);
                 console.log(`⏱️ Server responded in ${duration}s`);
-
+                
                 // Update progress
                 const phaseEl = document.getElementById('progress-phase');
                 if (phaseEl) phaseEl.textContent = 'Receiving data...';
-
+                
                 if (!r.ok) {
                     throw new Error(`HTTP ${r.status}: ${r.statusText}`);
                 }
-
+                
                 return r.json();
             })
             .then(data => {
                 console.log("📦 Data received, size:", JSON.stringify(data).length, "characters");
-
+                
                 const phaseEl = document.getElementById('progress-phase');
                 if (phaseEl) phaseEl.textContent = 'Parsing response...';
-
+                
                 // Use setTimeout to allow UI to update before heavy processing
                 setTimeout(() => {
                     processExperimentResults(data);
@@ -910,27 +463,14 @@ document.addEventListener("DOMContentLoaded", () => {
     // SEPARATE FUNCTION: Process results without blocking UI
     function processExperimentResults(data) {
         console.log("🎨 Starting to render results...");
-
+        
         try {
             // Reset button UI
             runButton.disabled = false;
             runButton.innerHTML = 'Run Experiment';
-
+            
             if (!data.success) {
-                // Show error in a proper modal popup
-                const errorType = data.error_type || 'error';
-                const errorMsg = data.error || 'Unknown error';
-
-                // Check if it's a preprocessing error (like column validation)
-                if (errorType === 'preprocessing') {
-                    showErrorModal(
-                        'Validation Error',
-                        errorMsg,
-                        data.all_errors || []
-                    );
-                } else {
-                    showErrorModal('Experiment Error', errorMsg, []);
-                }
+                resultsTableContainer.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
                 return;
             }
 
@@ -944,16 +484,16 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (e) {
                 console.warn("⚠️ Could not cache results in localStorage:", e);
             }
-
+            
             // Update progress text
             const progressTitle = document.getElementById('progress-title');
             const progressPhase = document.getElementById('progress-phase');
             if (progressTitle) progressTitle.textContent = 'Rendering visualizations...';
             if (progressPhase) progressPhase.textContent = 'Creating plots...';
-
+            
             // Render all plots and table
             renderResultsProgressively(data);
-
+            
         } catch (err) {
             console.error("💥 Error processing results:", err);
             resultsTableContainer.innerHTML = `<div class="alert alert-danger"><strong>Processing Error:</strong> ${err.message}</div>`;
@@ -963,58 +503,47 @@ document.addEventListener("DOMContentLoaded", () => {
     // PROGRESSIVE RENDERING: Render one plot at a time with delays
     function renderResultsProgressively(data) {
         console.log("📊 Progressive rendering started");
-
+        
         // Stage 1: Show results section
         resultsSection.style.display = "block";
-
+        
         // Stage 2: Render table (fastest)
         setTimeout(() => {
             console.log("📊 Rendering table...");
             renderTable(data.results_table);
-
+            
             // Stage 3: Render scatter plot
             setTimeout(() => {
                 console.log("📊 Rendering scatter plot...");
                 drawPlot("scatter-plot", data.target_scatter_figure);
-
+                
                 // Stage 4: Render TSNE plot
                 setTimeout(() => {
                     console.log("📊 Rendering TSNE plot...");
                     drawPlot("tsne-plot", data.tsne_figure);
-
+                    
                     // Stage 5: Render remaining plots
                     setTimeout(() => {
                         console.log("📊 Rendering uncertainty plot...");
                         drawPlot("uncertainty-plot", data.uncertainty_plot);
-
+                        
                         setTimeout(() => {
                             console.log("📊 Rendering history plot...");
                             drawPlot("history-plot", data.history_plot);
-
+                            
                             setTimeout(() => {
                                 console.log("📊 Rendering utility surface plot...");
                                 drawPlot("utility-surface-plot", data.utility_surface_plot);
-
-                                // Render trajectory plots
-                                setTimeout(() => {
-                                    console.log("📊 Rendering trajectory plots...");
-                                    if (data.trajectory_plot) {
-                                        drawPlot("trajectory-plot", data.trajectory_plot);
-                                    }
-                                    if (data.distance_plot) {
-                                        drawPlot("distance-plot", data.distance_plot);
-                                    }
-
-                                    // Update trajectory stats
-                                    if (data.trajectory_summary) {
-                                        const stats = data.trajectory_summary;
-                                        document.getElementById('stat-iterations').textContent = stats.total_iterations || 0;
-                                        document.getElementById('stat-distance').textContent = (stats.total_distance || 0).toFixed(2);
-                                    }
-
+                                
+                                if (data.prediction_error_plot) {
+                                    setTimeout(() => {
+                                        drawPlot("prediction-error-plot", data.prediction_error_plot);
+                                        console.log("✅ All plots rendered!");
+                                    }, 200);
+                                } else {
                                     console.log("✅ All plots rendered!");
-                                }, 200);
-                            }, 300);
+                                }
+                            }, 300);  // Longer delay for utility surface
                         }, 200);
                     }, 200);
                 }, 200);
@@ -1028,20 +557,19 @@ document.addEventListener("DOMContentLoaded", () => {
             resultsDataTable.destroy();
             resultsDataTable = null;
         }
-
+        
         resultsTableContainer.innerHTML = tableHtml;
-
+        
         const newTable = resultsTableContainer.querySelector("table");
         if (newTable) {
             if (!newTable.classList.contains('table')) {
                 newTable.classList.add('table', 'table-striped', 'w-100');
             }
-
+            
             resultsDataTable = new DataTable(newTable, {
                 paging: true,
                 searching: true,
-                ordering: true,  // User can still click columns to re-sort
-                order: [],  // PRESERVE SERVER-SIDE ORDER - don't apply initial sort
+                ordering: true,
                 info: true,
                 responsive: true,
                 deferRender: true,  // Performance optimization
@@ -1105,12 +633,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 responsive: true,
                 displayModeBar: true
             });
-
+            
             if (divId === 'utility-surface-plot') {
                 const msg = document.getElementById("utility-surface-message");
                 if (msg) msg.style.display = 'none';
             }
-
+            
             console.log(`✅ ${divId} drawn successfully`);
 
         } catch (err) {
@@ -1156,7 +684,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================================
     window.addEventListener("resize", () => {
         const plots = ["tsne-plot", "scatter-plot", "uncertainty-plot", "history-plot", "utility-surface-plot", "prediction-error-plot"];
-
+        
         plots.forEach(id => {
             const div = document.getElementById(id);
             if (div && div.data) {
@@ -1165,7 +693,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (resultsDataTable) {
-            resultsDataTable.columns.adjust().draw();
+             resultsDataTable.columns.adjust().draw();
         }
     });
 

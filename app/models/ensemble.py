@@ -30,7 +30,12 @@ class EnsembleSurrogate:
 
         if hasattr(model, 'predict_with_uncertainty'):
             # Handles DKL, RF (via custom wrapper), or other models with this method
-            predictions_orig_scale, uncertainties_orig_scale = model.predict_with_uncertainty(X_np, self.input_columns)
+            # Models now return 3 values: (mean, std, posterior_samples)
+            result = model.predict_with_uncertainty(X_np, self.input_columns)
+            if len(result) == 3:
+                predictions_orig_scale, uncertainties_orig_scale, _ = result
+            else:
+                predictions_orig_scale, uncertainties_orig_scale = result
         
         elif isinstance(model, torch.nn.Module):
             # Handles PyTorch models (like PINN/MAML) using MC Dropout
@@ -159,7 +164,8 @@ def weighted_uncertainty_ensemble(models, data, input_columns, target_columns,
                 y_val = labeled_data[target_columns].values
                 
                 # Use the helper function's logic to get predictions to be consistent
-                preds, _ = EnsembleSurrogate(models, weights, input_columns, target_columns)._get_single_model_prediction(
+                temp_ensemble = EnsembleSurrogate(models, weights, input_columns, target_columns)
+                preds, _ = temp_ensemble._get_single_model_prediction(
                     (model, scaler_inputs, scaler_targets), X_val
                 )
 
@@ -196,65 +202,53 @@ def weighted_uncertainty_ensemble(models, data, input_columns, target_columns,
     if max_or_min_objectives is None:
         max_or_min_objectives = ['max'] * len(target_columns)
 
-    # Use MOBO to get utility scores
-    # NOTE: multi_objective_bayesian_optimization must accept the EnsembleSurrogate
-    # and call its predict_with_uncertainty method.
-    utility_scores = multi_objective_bayesian_optimization(
-        train_inputs=train_inputs,
-        train_targets=train_targets,
-        candidate_inputs=candidate_inputs,
-        weights=np.array([1.0] * len(target_columns)), 
-        max_or_min=max_or_min_objectives,
-        curiosity=curiosity,
-        acquisition=acquisition_function,
-        strategy="weighted_sum",
-        surrogate_model=ensemble_surrogate, # The ensemble itself is the surrogate now!
-        input_columns=input_columns
+    # Initialize the Ensemble Surrogate
+    ensemble_surrogate = EnsembleSurrogate(
+        models=models,
+        weights=weights,
+        input_columns=input_columns,
+        target_columns=target_columns
     )
 
-    # Get final ensemble predictions and uncertainties for the result dataframe
+    # Get ensemble predictions and uncertainties
     ensemble_preds, ensemble_stds_broadcasted = ensemble_surrogate.predict_with_uncertainty(candidate_inputs)
-    
-    # We only care about the single uncertainty value (mean disagreement) per candidate for the result column
     ensemble_stds = ensemble_stds_broadcasted[:, 0]
 
     result_df = unlabeled_data.copy()
     for i, col in enumerate(target_columns):
         result_df[col] = ensemble_preds[:, i]
+        result_df[f"Uncertainty ({col})"] = ensemble_stds_broadcasted[:, i] if ensemble_stds_broadcasted.shape[1] > 1 else ensemble_stds
+
+    # WEBSLAMD-EXACT UTILITY CALCULATION
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
     
+    n_samples = len(ensemble_preds)
+    n_targets = len(target_columns)
+    preds_norm = np.zeros((n_samples, n_targets), dtype=float)
+    unc_norm = np.zeros((n_samples, n_targets), dtype=float)
+    
+    for i, col in enumerate(target_columns):
+        mean_val = labels_mean.iloc[i]
+        std_val = labels_std.iloc[i]
+        preds_norm[:, i] = (ensemble_preds[:, i] - mean_val) / std_val
+        if max_or_min_objectives[i].lower() == "min":
+            preds_norm[:, i] *= -1
+        preds_norm[:, i] *= 1.0  # uniform weight
+        unc_norm[:, i] = (ensemble_stds_broadcasted[:, i] if ensemble_stds_broadcasted.shape[1] > 1 else ensemble_stds) / std_val
+    
+    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    result_df["Utility"] = utility_scores
     result_df["Uncertainty"] = ensemble_stds
-    result_df["Utility"] = np.array(utility_scores).flatten() if utility_scores is not None else 0
 
     # Calculate novelty
     if not labeled_data.empty:
         labeled_inputs = labeled_data[input_columns].values
         unlabeled_inputs = unlabeled_data[input_columns].values
-
-        # Use a representative scaler from the first model
-        scaler_inputs = list(models.values())[0][1]
-        
-        # Check if scaler is None or lacks transform (e.g., if a model was GP without a scaler)
-        if scaler_inputs is None or not hasattr(scaler_inputs, 'transform'):
-             # If no scaler is available, use unscaled data for novelty (less robust, but necessary fallback)
-             labeled_inputs_scaled = labeled_inputs
-             unlabeled_inputs_scaled = unlabeled_inputs
-             print("Warning: Input scaler not found for novelty calculation. Using unscaled data.")
-        else:
-             labeled_inputs_scaled = scaler_inputs.transform(labeled_inputs)
-             unlabeled_inputs_scaled = scaler_inputs.transform(unlabeled_inputs)
-
-        novelty_scores = calculate_novelty(unlabeled_inputs_scaled, labeled_inputs_scaled)
+        novelty_scores = calculate_novelty(unlabeled_inputs, labeled_inputs)
         result_df["Novelty"] = novelty_scores
     else:
-        result_df["Novelty"] = 1.0 # Max novelty if no labeled data
-
-    # Use MOBO's utility for the final selection
-    result_df["Exploration"] = result_df["Uncertainty"] * (1.0 + curiosity) # Uncertainty comes from model disagreement
-    
-    # Simple exploitation metric (just the weighted mean performance)
-    # This might need a more sophisticated MOBO-aware calculation, but mean across targets is a simple proxy
-    mean_performance = np.sum(ensemble_preds * np.array([1.0] * len(target_columns)), axis=1)
-    result_df["Exploitation"] = mean_performance
+        result_df["Novelty"] = 1.0
 
     result_df = result_df.sort_values("Utility", ascending=False)
     result_df["Selected_for_Testing"] = False

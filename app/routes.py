@@ -11,72 +11,12 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from app.models.models import MAMLModel, evaluate_maml, meta_train
-from app.models.reptile_model import ReptileModel, evaluate_reptile, reptile_train
-from app.models.gp_model import GPModel, train_gp_model, evaluate_gp_model
-from app.models.protonet_model import ProtoNetModel, evaluate_protonet, protonet_train
-from app.models.dkl_surrogate_model import DKLModel, train_dkl_model, evaluate_dkl_model
-from app.models.rf_model import train_rf_model, evaluate_rf_model, RFModel
-from app.models.pinn_model import PINNModel, pinn_train, evaluate_pinn
-from app.models.lolopy_model import LolopyRFModel, train_lolopy_model, evaluate_lolopy_model
-from app.models.ensemble import weighted_uncertainty_ensemble
-from app.models.ensemble import weighted_uncertainty_ensemble
-# from app.models.bayesian_optimizer import BayesianOptimizer # Removed broken usage
-from app.utils.utils import calculate_utility, calculate_novelty
 from app.utils.plot_generator import PlotGenerator
+from app.utils.settings_manager import SettingsManager
+from app.utils.trajectory_tracker import TrajectoryTracker
 
 logging.basicConfig(level=logging.DEBUG)
 main_bp = Blueprint('main', __name__)
-
-# --- Model Configuration Dictionary ---
-MODEL_CONFIG = {
-    'maml': {
-        'model_class': MAMLModel,
-        'evaluate_func': evaluate_maml,
-    },
-    'reptile': {
-        'model_class': ReptileModel,
-        'train_func': reptile_train,
-        'evaluate_func': evaluate_reptile,
-        'train_params': (50, 0.001, 5, 16),
-    },
-    'protonet': {
-        'model_class': ProtoNetModel,
-        'train_func': protonet_train,
-        'evaluate_func': evaluate_protonet,
-        'train_params': (50, 0.001, 5, 5, 5),
-    },
-    'rf': {
-        'model_class': RFModel,
-        'train_func': train_rf_model,
-        'evaluate_func': evaluate_rf_model,
-        'train_params': None,
-    },
-    'pinn': {
-        'model_class': PINNModel,
-        'train_func': pinn_train,
-        'evaluate_func': evaluate_pinn,
-        'train_params': (100, 0.001, 0.1, 32),
-    },
-    'gp': {
-        'model_class': GPModel,
-        'train_func': train_gp_model,
-        'evaluate_func': evaluate_gp_model,
-        'train_params': ({}),  # Empty dict for model_params
-    },
-    'lolopy': {
-        'model_class': LolopyRFModel,
-        'train_func': train_lolopy_model,
-        'evaluate_func': evaluate_lolopy_model,
-        'train_params': None,
-    },
-    'dkl': {
-        'model_class': DKLModel,
-        'train_func': train_dkl_model,
-        'evaluate_func': evaluate_dkl_model,
-        'train_params': ({}),  # Empty dict for model_params
-    },
-}
 
 # ======================================================
 # UTILITY FUNCTIONS
@@ -103,6 +43,50 @@ def dashboard():
         'filename': session.get('filename', None)
     }
     return render_template('dashboard.html', initial_data=json.dumps(initial_data))
+
+
+@main_bp.route('/api/settings', methods=['GET'])
+def get_settings():
+    """Return current settings for the dashboard."""
+    settings = SettingsManager.load_settings()
+    return jsonify({'success': True, 'settings': settings})
+
+
+@main_bp.route('/api/settings', methods=['POST'])
+def save_settings():
+    """Save settings from the dashboard UI."""
+    try:
+        new_settings = request.get_json()
+        success = SettingsManager.save_settings(new_settings)
+        if success:
+            return jsonify({'success': True, 'message': 'Settings saved.'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save settings.'}), 500
+    except Exception as e:
+        logging.error(f"Error saving settings: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/trajectory', methods=['GET'])
+def get_trajectory():
+    """Return current trajectory data for visualization."""
+    try:
+        summary = TrajectoryTracker.get_trajectory_summary()
+        return jsonify({'success': True, 'trajectory': summary})
+    except Exception as e:
+        logging.error(f"Error getting trajectory: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/trajectory', methods=['DELETE'])
+def clear_trajectory():
+    """Clear trajectory history for new experiment run."""
+    try:
+        TrajectoryTracker.clear()
+        return jsonify({'success': True, 'message': 'Trajectory cleared.'})
+    except Exception as e:
+        logging.error(f"Error clearing trajectory: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @main_bp.route("/scenario", methods=["GET", "POST"])
@@ -266,9 +250,17 @@ def upload_data():
 
     try:
         data = pd.read_csv(filepath)
-        session['data_columns'] = data.columns.tolist()
-        session['filename'] = filename 
-        return jsonify({'success': True, 'columns': data.columns.tolist(), 'filename': filename})
+        columns = data.columns.tolist()
+        session['data_columns'] = columns
+        session['filename'] = filename
+        
+        # Persist dataset info to settings for cross-page navigation
+        SettingsManager.save_settings({
+            'current_dataset': filename,
+            'current_dataset_columns': columns
+        })
+        
+        return jsonify({'success': True, 'columns': columns, 'filename': filename})
     except Exception as e:
         return jsonify({'success': False, 'error': f"Failed to read CSV: {str(e)}"})
 
@@ -306,131 +298,47 @@ def run_experiment():
         weights = np.array([float(t['weight']) for t in target_columns_config])
         max_or_min = [t['optimization'] for t in target_columns_config]
         
+        # Parse a-priori configuration (new: with min/max support)
+        apriori_config = config.get('apriori_columns', [])
+        apriori_columns = [a['name'] for a in apriori_config] if apriori_config else []
+        apriori_weights = np.array([float(a['weight']) for a in apriori_config]) if apriori_config else np.array([])
+        apriori_max_or_min = [a['optimization'] for a in apriori_config] if apriori_config else []
+        
+        # Store a-priori config in request json for engine to use
+        config['apriori_columns_names'] = apriori_columns
+        config['apriori_weights'] = apriori_weights.tolist() if len(apriori_weights) > 0 else []
+        config['apriori_max_or_min'] = apriori_max_or_min
+        
         results_df = pd.DataFrame()
 
         # 2. Model Execution
-        config_entry = MODEL_CONFIG.get(model_name)
-        input_size = len(input_columns)
-        output_size = len(target_columns)
+        # 2. Active Learning Engine Execution
+        from app.engines.hybrid_engine import HybridEngine
+        
+        # Pass the request json as config
+        results_df = HybridEngine.run_experiment(data, config)
 
-        if config_entry:
-            if model_name in ['maml', 'reptile', 'protonet', 'pinn']:
-                model = config_entry['model_class'](input_size=input_size, output_size=output_size)
-            else:
-                model = None
-
-            if 'train_func' in config_entry:
-                train_func = config_entry['train_func']
-                train_params = config_entry.get('train_params')
-                
-                # DKL and GP have different signatures - they don't take model as first arg
-                if model_name in ['dkl', 'gp']:
-                    if train_params is not None:
-                        # train_params is a tuple with a single dict, extract it
-                        model_params = train_params[0] if isinstance(train_params, tuple) else train_params
-                        model, _, _ = train_func(data, input_columns, target_columns, model_params)
-                    else:
-                        model, _, _ = train_func(data, input_columns, target_columns, {})
-                elif train_params is not None:
-                    model, _, _ = train_func(model, data, input_columns, target_columns, *train_params)
-                else:
-                    model, _, _ = train_func(data, input_columns, target_columns)
-
-            evaluate_func = config_entry['evaluate_func']
-            
-            # DKL and GP have different evaluate signatures
-            if model_name in ['dkl', 'gp']:
-                # These expect: (model, labeled_data, candidate_inputs, input_columns, target_columns, weights, max_or_min, curiosity)
-                labeled_data = data.dropna(subset=target_columns)
-                candidate_data = data[data[target_columns[0]].isnull()] if isinstance(target_columns, list) else data[data[target_columns].isnull()]
-                candidate_inputs = candidate_data[input_columns]
-                results_df = evaluate_func(model, labeled_data, candidate_inputs, input_columns, target_columns, weights, max_or_min, curiosity)
-            else:
-                # Standard signature: (model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-                results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
-
-        elif model_name == 'ensemble':
-            pinn_model = PINNModel(input_size=input_size, output_size=output_size)
-            pinn_model, pinn_scaler_x, pinn_scaler_y = pinn_train(pinn_model, data, input_columns, target_columns, 100, 0.001, 0.1, 32)
-            rf_model, rf_scaler_x, rf_scaler_y = train_rf_model(data, input_columns, target_columns)
-            models = {'pinn': (pinn_model, pinn_scaler_x, pinn_scaler_y), 'rf': (rf_model, rf_scaler_x, rf_scaler_y)}
-            results_df, _ = weighted_uncertainty_ensemble(models, data, input_columns, target_columns, curiosity, weights, max_or_min)
-
-        # 3. Safety Checks
+        # 3. Safety Checks & Post-Processing
         if results_df.empty:
-             return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
+            # Check for preprocessing errors
+            if hasattr(results_df, 'attrs') and 'preprocessing_errors' in results_df.attrs:
+                errors = results_df.attrs['preprocessing_errors']
+                error_msg = errors[0] if errors else 'Unknown preprocessing error'
+                return jsonify({
+                    'success': False, 
+                    'error': error_msg,
+                    'error_type': 'preprocessing',
+                    'all_errors': errors
+                })
+            return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
 
-        if 'Utility' not in results_df.columns or results_df['Utility'].isnull().all():
-             # optimizer = BayesianOptimizer(data[input_columns].values, data[target_columns].values, target_columns_config)
-             pred_col = 'prediction' if 'prediction' in results_df.columns else target_columns[0]
-             unc_col = 'uncertainty' if 'uncertainty' in results_df.columns else 'Uncertainty'
-             
-             if pred_col in results_df.columns:
-                 preds = results_df[pred_col].values.reshape(-1, 1)
-             else:
-                 preds = np.zeros((len(results_df), 1))
-                 
-             if unc_col in results_df.columns:
-                 uncs = results_df[unc_col].values.reshape(-1, 1)
-             else:
-                 uncs = np.ones((len(results_df), 1)) * 0.1
-
-             # --- SLAMD-like Bayesian Optimization Logic ---
-             # 1. Calculate Novelty
-             # 'results_df' contains predictions for unlabeled/candidate samples only
-             # We need to calculate novelty for these candidates relative to labeled samples
-             
-             # Identify labeled data (rows where ALL targets are present)
-             is_labeled = ~data[target_columns].isnull().any(axis=1)
-             labeled_features = data.loc[is_labeled, input_columns].values
-             
-             # Get features for the samples in results_df
-             # results_df should have the same index as the unlabeled rows in data
-             candidate_features = data.loc[results_df.index, input_columns].values
-             
-             # Calculate novelty for candidate samples relative to labeled set
-             novelty_scores = calculate_novelty(candidate_features, labeled_features)
-             results_df['Novelty'] = novelty_scores
-
-             # 2. Calculate Utility
-             # predictions: (n_samples, 1) - we use the primary prediction column
-             # uncertainties: (n_samples, 1)
-             # novelty: (n_samples, 1)
-             
-             utility = calculate_utility(
-                 predictions=preds,
-                 uncertainties=uncs,
-                 novelty=novelty_scores,
-                 curiosity=curiosity,
-                 weights=weights,
-                 max_or_min=max_or_min,
-                 acquisition="UCB" # Default to UCB-like logic inside calculate_utility
-             )
-             results_df['Utility'] = utility.flatten()
-
-        results_df['Utility'] = pd.to_numeric(results_df['Utility'], errors='coerce').fillna(0.0)
-
-        if 'uncertainty' in results_df.columns:
-            results_df['Uncertainty'] = results_df['uncertainty']
+        # Ensure Utility and Uncertainty exist (Engine should handle this, but double check)
+        results_df['Utility'] = pd.to_numeric(results_df.get('Utility', 0), errors='coerce').fillna(0.0)
         
-        if 'Uncertainty' not in results_df.columns or results_df['Uncertainty'].max() < 1e-6:
-             results_df['Uncertainty'] = results_df['Utility'].abs() * 0.2 + 0.01
-
-        # SLAMD APPROACH: Utility is already normalized by the model
-        # But we need to ensure it's in a reasonable range for visualization
-        # SLAMD uses z-score normalization (mean=0, std=1), then clips to reasonable bounds
-        
-        # Normalize utility using z-score if values are too large
-        utility_mean = results_df['Utility'].mean()
-        utility_std = results_df['Utility'].std()
-        
-        if utility_std > 0 and (results_df['Utility'].abs().max() > 10):
-            # If utility values are outside typical range, normalize them
-            results_df['Utility'] = (results_df['Utility'] - utility_mean) / utility_std
-            print(f"✅ Utility z-score normalized (mean={utility_mean:.2f}, std={utility_std:.2f})")
-        
-        # Round to 6 decimal places like SLAMD
-        results_df['Utility'] = results_df['Utility'].round(6)
+        if 'Uncertainty' in results_df.columns:
+             results_df['Uncertainty'] = pd.to_numeric(results_df['Uncertainty'], errors='coerce').fillna(0.01)
+        else:
+             results_df['Uncertainty'] = 0.01
 
         # 4. Generate Visualizations (OPTIMIZED)
         print("📊 Starting visualization generation...")
@@ -455,7 +363,7 @@ def run_experiment():
         
         tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns, cache_key=tsne_cache_key)
         
-        cols_to_merge = ['Utility', 'Uncertainty']
+        cols_to_merge = ['Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score'] # Added debug cols
         common_indices = tsne_df.index.intersection(results_df.index)
         
         for col in cols_to_merge:
@@ -479,7 +387,8 @@ def run_experiment():
             tsne_plot_df = tsne_df
         
         print(f"📈 Generating TSNE plot with {len(tsne_plot_df)} points...")
-        tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_plot_df, input_columns)
+        current_mode = SettingsManager.get_setting("active_learning_mode", "ML_MODE")
+        tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_plot_df, input_columns, mode=current_mode)
         print("✅ TSNE plot generated")
 
         print(f"📈 Generating target scatter plot...")
@@ -512,12 +421,20 @@ def run_experiment():
         print("✅ Utility surface plot generated")
 
         prediction_error_plot = {'data': [], 'layout': {'title': 'Error Plot N/A'}}
+        
+        # Generate trajectory plot
+        print(f"📈 Generating trajectory plot...")
+        trajectory_summary = TrajectoryTracker.get_trajectory_summary()
+        trajectory_plot = PlotGenerator.create_trajectory_plot(tsne_df, trajectory_summary, input_columns)
+        distance_plot = PlotGenerator.create_distance_plot(trajectory_summary)
+        print(f"✅ Trajectory plot generated ({trajectory_summary['total_iterations']} iterations)")
 
         print(f"📊 Preparing results table...")
         
         # Ensure results are sorted by Utility descending (SLAMD style)
         if 'Utility' in results_df.columns:
             results_df = results_df.sort_values(by='Utility', ascending=False)
+            print(f"📊 After sort - First 5 Utility values: {results_df['Utility'].head(5).tolist()}")
             
         if len(results_df) > 500:
             table_df = results_df.head(500)
@@ -543,7 +460,10 @@ def run_experiment():
             "uncertainty_plot": uncertainty_plot,
             "history_plot": history_plot, 
             "utility_surface_plot": utility_surface_plot,
-            "prediction_error_plot": prediction_error_plot
+            "prediction_error_plot": prediction_error_plot,
+            "trajectory_plot": trajectory_plot,
+            "distance_plot": distance_plot,
+            "trajectory_summary": trajectory_summary
         }
 
         print("📤 Sending response to client...")
