@@ -1,0 +1,22 @@
+{
+  "id": "rl_experiment_20260106_193748",
+  "name": "rl_experiment",
+  "config": {
+    "model": "rl",
+    "acquisition": "webslamd",
+    "curiosity": 0.0,
+    "num_features": 13,
+    "num_targets": 2
+  },
+  "tags": [],
+  "metrics": {},
+  "start_time": "2026-01-06T19:37:48.103385",
+  "end_time": "2026-01-06T19:37:48.108255",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 0,
+    "utility_mean": null,
+    "utility_max": null,
+    "selected_sample": []
+  }
+}

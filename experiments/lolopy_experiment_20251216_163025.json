@@ -1,0 +1,52 @@
+{
+  "id": "lolopy_experiment_20251216_163025",
+  "name": "lolopy_experiment",
+  "config": {
+    "model": "lolopy",
+    "acquisition": "webslamd",
+    "curiosity": 0.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 139,
+    "utility_max": 1.0790783962116683,
+    "utility_mean": -0.486521687926518
+  },
+  "start_time": "2025-12-16T16:30:25.794152",
+  "end_time": "2025-12-16T16:30:26.908634",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 139,
+    "utility_mean": -0.486521687926518,
+    "utility_max": 1.0790783962116683,
+    "selected_sample": [
+      {
+        "Idx_Sample": 1527,
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 210,
+        "GGBFS (kg/m3)": 210,
+        "Coarse aggregate (kg/m3)": 1010.9298,
+        "Fine aggregate (kg/m3)": 765.67018,
+        "Total aggregates": 1776.6,
+        "Na2SiO3": 150.0,
+        "Na2O (Dry)": 17.25,
+        "Sio2 (Dry)": 45.0,
+        "Superplasticizer": 16.8,
+        "water -eff": 138.63,
+        "Slump - Target (mm)": NaN,
+        "CO2 (kg/t) - A-priori Information": 142.63968,
+        "fc 28-d - Target (MPa)": 58.00509999999994,
+        "Row number": 93,
+        "Uncertainty (fc 28-d - Target (MPa))": 4.035680182491363,
+        "Utility": 1.0790783962116683,
+        "Uncertainty": 4.035680182491363,
+        "Novelty": 0.22870483178643936,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

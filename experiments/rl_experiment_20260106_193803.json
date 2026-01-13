@@ -1,0 +1,54 @@
+{
+  "id": "rl_experiment_20260106_193803",
+  "name": "rl_experiment",
+  "config": {
+    "model": "rl",
+    "acquisition": "webslamd",
+    "curiosity": 0.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 139,
+    "utility_max": 0.7505979577856751,
+    "utility_mean": -0.1825262262863835
+  },
+  "start_time": "2026-01-06T19:38:03.363533",
+  "end_time": "2026-01-06T19:38:05.092081",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 139,
+    "utility_mean": -0.1825262262863835,
+    "utility_max": 0.7505979577856751,
+    "selected_sample": [
+      {
+        "Idx_Sample": 1557,
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 210,
+        "GGBFS (kg/m3)": 210,
+        "Coarse aggregate (kg/m3)": 1010.9298,
+        "Fine aggregate (kg/m3)": 765.67018,
+        "Total aggregates": 1776.6,
+        "Na2SiO3": 165.0,
+        "Na2O (Dry)": 18.98,
+        "Sio2 (Dry)": 49.5,
+        "Superplasticizer": 16.8,
+        "water -eff": 151.485,
+        "Slump - Target (mm)": NaN,
+        "CO2 (kg/t) - A-priori Information": 151.71648,
+        "fc 28-d - Target (MPa)": NaN,
+        "Row number": 123,
+        "Predicted_fc 28-d - Target (MPa)": 57.919999999999995,
+        "Uncertainty (fc 28-d - Target (MPa))": 7.866096496582031,
+        "Utility": 0.7505979577856751,
+        "Uncertainty": 0.9957153797149658,
+        "Novelty": 0.4085736335619496,
+        "RL_Score": 0.009278800338506699,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

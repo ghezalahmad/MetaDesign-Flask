@@ -11,11 +11,47 @@
         </div>
 
         <h5>Features</h5>
+        <div class="row mb-2 text-muted small fw-bold">
+            <div class="col-md-2">Name</div>
+            <div class="col-md-2">Type</div>
+            <div class="col-md-6">Configuration</div>
+            <div class="col-md-1 text-center">Count</div>
+            <div class="col-md-1"></div>
+        </div>
         <div id="features-container">
             <!-- Feature rows will be added here dynamically -->
         </div>
 
-        <button type="button" id="add-feature-button" class="btn btn-secondary">Add Feature</button>
+        <div class="d-flex justify-content-between align-items-center mt-2 mb-3">
+            <button type="button" id="add-feature-button" class="btn btn-outline-secondary btn-sm">+ Add
+                Feature</button>
+            <button type="button" class="btn btn-link btn-sm text-decoration-none" data-bs-toggle="collapse"
+                data-bs-target="#summary-table-section">
+                <i class="bi bi-table"></i> Toggle Summary Table
+            </button>
+        </div>
+
+        <!-- Summary Table (Collapsible) -->
+        <div class="collapse mb-3" id="summary-table-section">
+            <div class="card card-body">
+                <h6 class="card-title">Feature Summary</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped" id="feature-summary-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Feature Name</th>
+                                <th>Type</th>
+                                <th>Values Count</th>
+                                <th>Parameters</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
 
         <h5 class="mt-4">Target Properties</h5>
         <div id="targets-container">
@@ -27,14 +63,16 @@
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 <button type="submit" name="action" value="save" class="btn btn-primary">Generate & Save CSV</button>
-                <button type="submit" name="action" value="open" class="btn btn-success">Generate & Open in Material Discovery</button>
+                <button type="submit" name="action" value="open" class="btn btn-success">Generate & Open in Material
+                    Discovery</button>
             </div>
             <div id="row-count-preview" class="text-muted"></div>
         </div>
     </form>
 
     <!-- Modal -->
-    <div class="modal fade" id="confirmationModal" tabindex="-1" aria-labelledby="confirmationModalLabel" aria-hidden="true">
+    <div class="modal fade" id="confirmationModal" tabindex="-1" aria-labelledby="confirmationModalLabel"
+        aria-hidden="true">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
@@ -60,9 +98,12 @@
                 <li class="list-group-item d-flex justify-content-between align-items-center">
                     {{ item.name }}
                     <div>
-                        <a href="{{ url_for('main.index', ds=item.name) }}" class="btn btn-sm btn-outline-primary">Open</a>
-                        <a href="{{ url_for('main.download_design_space', filename=item.name) }}" class="btn btn-sm btn-outline-secondary">Download</a>
-                        <button class="btn btn-sm btn-outline-danger delete-btn" data-filename="{{ item.name }}">Delete</button>
+                        <a href="{{ url_for('main.dashboard') }}?ds={{ item.name }}"
+                            class="btn btn-sm btn-outline-primary">Open</a>
+                        <a href="{{ url_for('design_space.download_design_space', filename=item.name) }}"
+                            class="btn btn-sm btn-outline-secondary">Download</a>
+                        <button class="btn btn-sm btn-outline-danger delete-btn"
+                            data-filename="{{ item.name }}">Delete</button>
                     </div>
                 </li>
                 {% else %}
@@ -74,22 +115,35 @@
 </div>
 
 <template id="feature-row-template">
-    <div class="row mb-3 feature-row">
-        <div class="col-md-3">
-            <input type="text" class="form-control" name="feature_name" placeholder="Feature Name" required>
-        </div>
-        <div class="col-md-3">
-            <select class="form-select feature-type-select" name="feature_type">
-                <option value="continuous">Continuous Range</option>
-                <option value="discrete">Discrete Set</option>
-                <option value="categorical">Categorical/Binary</option>
-            </select>
-        </div>
-        <div class="col-md-5 feature-values">
-            <!-- Dynamic content based on selection -->
-        </div>
-        <div class="col-md-1">
-            <button type="button" class="btn btn-danger remove-feature-button">Remove</button>
+    <div class="card mb-2 feature-row">
+        <div class="card-body py-2">
+            <div class="row align-items-center">
+                <div class="col-md-2">
+                    <input type="text" class="form-control form-control-sm" name="feature_name"
+                        placeholder="Feature Name" required>
+                </div>
+                <div class="col-md-2">
+                    <select class="form-select form-select-sm feature-type-select" name="feature_type">
+                        <option value="continuous">Continuous Range</option>
+                        <option value="discrete">Discrete Set</option>
+                        <option value="categorical">Categorical/Binary</option>
+                    </select>
+                </div>
+                <div class="col-md-6 feature-values">
+                    <!-- Dynamic content based on selection -->
+                </div>
+                <div class="col-md-1 text-center">
+                    <span class="badge bg-primary feature-count">0</span>
+                </div>
+                <div class="col-md-1">
+                    <button type="button" class="btn btn-sm btn-outline-danger remove-feature-button">×</button>
+                </div>
+            </div>
+            <div class="row mt-1">
+                <div class="col-12">
+                    <small class="text-muted value-preview"></small>
+                </div>
+            </div>
         </div>
     </div>
 </template>
@@ -106,144 +160,405 @@
 </template>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const featuresContainer = document.getElementById('features-container');
-    const addFeatureButton = document.getElementById('add-feature-button');
-    const featureRowTemplate = document.getElementById('feature-row-template');
-    const targetsContainer = document.getElementById('targets-container');
-    const addTargetButton = document.getElementById('add-target-button');
-    const targetRowTemplate = document.getElementById('target-row-template');
-    const form = document.getElementById('design-space-form');
-    const rowCountPreview = document.getElementById('row-count-preview');
-    const confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
-    let totalCombinations = 0;
+    document.addEventListener('DOMContentLoaded', function () {
+        const featuresContainer = document.getElementById('features-container');
+        const addFeatureButton = document.getElementById('add-feature-button');
+        const featureRowTemplate = document.getElementById('feature-row-template');
+        const targetsContainer = document.getElementById('targets-container');
+        const addTargetButton = document.getElementById('add-target-button');
+        const targetRowTemplate = document.getElementById('target-row-template');
+        const form = document.getElementById('design-space-form');
+        const rowCountPreview = document.getElementById('row-count-preview');
+        const confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
+        let totalCombinations = 0;
 
-    form.addEventListener('submit', function(e) {
-        updateRowCountPreview(); // Make sure the count is up to date
-        if (totalCombinations > 100000) {
-            e.preventDefault();
-            confirmationModal.show();
-        }
-    });
-
-    document.getElementById('confirm-generate-button').addEventListener('click', function() {
-        const confirmInput = document.createElement('input');
-        confirmInput.type = 'hidden';
-        confirmInput.name = 'confirm';
-        confirmInput.value = 'true';
-        form.appendChild(confirmInput);
-        form.submit();
-    });
-
-    addFeatureButton.addEventListener('click', function() {
-        const newRow = featureRowTemplate.content.cloneNode(true);
-        featuresContainer.appendChild(newRow);
-        updateFeatureValues(featuresContainer.lastElementChild.querySelector('.feature-type-select'));
-    });
-
-    featuresContainer.addEventListener('change', function(e) {
-        if (e.target.classList.contains('feature-type-select')) {
-            updateFeatureValues(e.target);
-        }
-    });
-
-    featuresContainer.addEventListener('click', function(e) {
-        if (e.target.classList.contains('remove-feature-button')) {
-            e.target.closest('.feature-row').remove();
-            updateRowCountPreview();
-        }
-    });
-
-    form.addEventListener('input', updateRowCountPreview);
-
-    addTargetButton.addEventListener('click', function() {
-        const newRow = targetRowTemplate.content.cloneNode(true);
-        targetsContainer.appendChild(newRow);
-    });
-
-    targetsContainer.addEventListener('click', function(e) {
-        if (e.target.classList.contains('remove-target-button')) {
-            e.target.closest('.target-row').remove();
-        }
-    });
-
-    document.getElementById('design-space-history').addEventListener('click', function(e) {
-        if (e.target.classList.contains('delete-btn')) {
-            const filename = e.target.dataset.filename;
-            if (confirm(`Are you sure you want to delete ${filename}?`)) {
-                fetch(`/delete-design-space/${filename}`, { method: 'DELETE' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            e.target.closest('li').remove();
-                        } else {
-                            alert('Error deleting file: ' + data.error);
-                        }
-                    });
+        form.addEventListener('submit', function (e) {
+            updateRowCountPreview(); // Make sure the count is up to date
+            if (totalCombinations > 100000) {
+                e.preventDefault();
+                confirmationModal.show();
             }
-        }
-    });
+        });
 
-    function updateFeatureValues(selectElement) {
-        const valuesContainer = selectElement.closest('.feature-row').querySelector('.feature-values');
-        const featureType = selectElement.value;
-        let html = '';
+        document.getElementById('confirm-generate-button').addEventListener('click', function () {
+            const confirmInput = document.createElement('input');
+            confirmInput.type = 'hidden';
+            confirmInput.name = 'confirm';
+            confirmInput.value = 'true';
+            form.appendChild(confirmInput);
+            form.submit();
+        });
 
-        if (featureType === 'continuous') {
-            html = `
-                <div class="input-group">
-                    <input type="number" class="form-control" name="min" placeholder="Min" required>
-                    <input type="number" class="form-control" name="max" placeholder="Max" required>
-                    <input type="number" class="form-control" name="step" placeholder="Step" step="any" required>
-                </div>
-            `;
-        } else if (featureType === 'discrete' || featureType === 'categorical') {
-            html = `
-                <input type="text" class="form-control" name="values" placeholder="Comma-separated values" required>
-            `;
-        }
-        valuesContainer.innerHTML = html;
-    }
+        addFeatureButton.addEventListener('click', function () {
+            const newRow = featureRowTemplate.content.cloneNode(true);
+            featuresContainer.appendChild(newRow);
+            updateFeatureValues(featuresContainer.lastElementChild.querySelector('.feature-type-select'));
+        });
 
-    function updateRowCountPreview() {
-        const featureRows = document.querySelectorAll('.feature-row');
-        totalCombinations = 1;
-        let previewPossible = true;
+        featuresContainer.addEventListener('change', function (e) {
+            if (e.target.classList.contains('feature-type-select')) {
+                updateFeatureValues(e.target);
+            }
+        });
 
-        featureRows.forEach(row => {
-            const featureType = row.querySelector('.feature-type-select').value;
-            const valuesContainer = row.querySelector('.feature-values');
+        featuresContainer.addEventListener('click', function (e) {
+            if (e.target.classList.contains('remove-feature-button')) {
+                e.target.closest('.feature-row').remove();
+                updateRowCountPreview();
+            }
+        });
 
-            if (featureType === 'continuous') {
-                const min = parseFloat(valuesContainer.querySelector('input[name="min"]').value);
-                const max = parseFloat(valuesContainer.querySelector('input[name="max"]').value);
-                const step = parseFloat(valuesContainer.querySelector('input[name="step"]').value);
-                if (!isNaN(min) && !isNaN(max) && !isNaN(step) && step > 0 && min <= max) {
-                    const count = Math.floor((max - min) / step) + 1;
-                    totalCombinations *= count;
-                } else {
-                    previewPossible = false;
-                }
-            } else if (featureType === 'discrete' || featureType === 'categorical') {
-                const values = valuesContainer.querySelector('input[name="values"]').value;
-                if (values) {
-                    const count = values.split(',').length;
-                    totalCombinations *= count;
-                } else {
-                    previewPossible = false;
+        form.addEventListener('input', updateRowCountPreview);
+
+        addTargetButton.addEventListener('click', function () {
+            const newRow = targetRowTemplate.content.cloneNode(true);
+            targetsContainer.appendChild(newRow);
+        });
+
+        targetsContainer.addEventListener('click', function (e) {
+            if (e.target.classList.contains('remove-target-button')) {
+                e.target.closest('.target-row').remove();
+            }
+        });
+
+        document.getElementById('design-space-history').addEventListener('click', function (e) {
+            if (e.target.classList.contains('delete-btn')) {
+                const filename = e.target.dataset.filename;
+                if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                    fetch(`/delete-design-space/${filename}`, { method: 'DELETE' })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                e.target.closest('li').remove();
+                            } else {
+                                alert('Error deleting file: ' + data.error);
+                            }
+                        });
                 }
             }
         });
 
-        if (previewPossible && totalCombinations > 0) {
-            rowCountPreview.textContent = `Total Combinations: ${totalCombinations}`;
-            if (totalCombinations > 100000) {
-                 rowCountPreview.innerHTML += ' <span class="badge bg-warning text-dark">Warning: Large dataset</span>';
+        function updateFeatureValues(selectElement) {
+            const featureRow = selectElement.closest('.feature-row');
+            const valuesContainer = featureRow.querySelector('.feature-values');
+            const featureType = selectElement.value;
+            let html = '';
+
+            if (featureType === 'continuous') {
+                html = `
+                <div class="row g-1">
+                    <div class="col-3">
+                        <input type="number" class="form-control form-control-sm" name="min" placeholder="Min" step="any" required>
+                    </div>
+                    <div class="col-3">
+                        <input type="number" class="form-control form-control-sm" name="max" placeholder="Max" step="any" required>
+                    </div>
+                    <div class="col-3">
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control step-input" name="step" placeholder="Step" step="any" required>
+                            <input type="number" class="form-control npoints-input d-none" name="n_points" placeholder="# Points" min="2">
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input mode-toggle" type="checkbox" role="switch" id="mode-${Date.now()}">
+                            <label class="form-check-label small" for="mode-${Date.now()}">n_points</label>
+                        </div>
+                    </div>
+                </div>
+                `;
+            } else if (featureType === 'discrete' || featureType === 'categorical') {
+                html = `
+                <input type="text" class="form-control form-control-sm" name="values" placeholder="Comma-separated values" required>
+                `;
             }
-        } else {
-            rowCountPreview.textContent = '';
+            valuesContainer.innerHTML = html;
+
+            // Add toggle event listener for continuous type
+            if (featureType === 'continuous') {
+                const toggle = valuesContainer.querySelector('.mode-toggle');
+                const stepInput = valuesContainer.querySelector('.step-input');
+                const npointsInput = valuesContainer.querySelector('.npoints-input');
+
+                toggle.addEventListener('change', function () {
+                    if (this.checked) {
+                        stepInput.classList.add('d-none');
+                        stepInput.removeAttribute('required');
+                        stepInput.value = '';
+                        npointsInput.classList.remove('d-none');
+                        npointsInput.setAttribute('required', '');
+                    } else {
+                        npointsInput.classList.add('d-none');
+                        npointsInput.removeAttribute('required');
+                        npointsInput.value = '';
+                        stepInput.classList.remove('d-none');
+                        stepInput.setAttribute('required', '');
+                    }
+                    updateRowCountPreview();
+                });
+            }
+
+            updateRowCountPreview();
         }
-    }
-});
+
+        function updateRowCountPreview() {
+            const featureRows = document.querySelectorAll('.feature-row');
+            totalCombinations = 1;
+            let previewPossible = true;
+
+            featureRows.forEach(row => {
+                const featureType = row.querySelector('.feature-type-select').value;
+                const valuesContainer = row.querySelector('.feature-values');
+                const countBadge = row.querySelector('.feature-count');
+                const valuePreview = row.querySelector('.value-preview');
+                let count = 0;
+                let previewValues = [];
+
+                if (featureType === 'continuous') {
+                    const minInput = valuesContainer.querySelector('input[name="min"]');
+                    const maxInput = valuesContainer.querySelector('input[name="max"]');
+                    const stepInput = valuesContainer.querySelector('.step-input');
+                    const npointsInput = valuesContainer.querySelector('.npoints-input');
+                    const modeToggle = valuesContainer.querySelector('.mode-toggle');
+
+                    const min = parseFloat(minInput?.value);
+                    const max = parseFloat(maxInput?.value);
+                    const useNPoints = modeToggle?.checked;
+
+                    if (!isNaN(min) && !isNaN(max) && min <= max) {
+                        if (useNPoints) {
+                            // n_points mode
+                            const nPoints = parseInt(npointsInput?.value);
+                            if (!isNaN(nPoints) && nPoints >= 2) {
+                                count = nPoints;
+                                previewValues = generateLinspace(min, max, nPoints);
+                            } else {
+                                previewPossible = false;
+                            }
+                        } else {
+                            // step mode
+                            const step = parseFloat(stepInput?.value);
+                            if (!isNaN(step) && step > 0) {
+                                count = Math.floor((max - min) / step) + 1;
+                                previewValues = generateRange(min, max, step).slice(0, 10);
+                            } else {
+                                previewPossible = false;
+                            }
+                        }
+
+                        if (count > 0) {
+                            totalCombinations *= count;
+                        }
+                    } else {
+                        previewPossible = false;
+                    }
+                } else if (featureType === 'discrete' || featureType === 'categorical') {
+                    const valuesInput = valuesContainer.querySelector('input[name="values"]');
+                    const values = valuesInput?.value;
+                    if (values) {
+                        const valuesList = values.split(',').map(v => v.trim()).filter(v => v);
+                        count = valuesList.length;
+                        previewValues = valuesList.slice(0, 10);
+                        totalCombinations *= count;
+                    } else {
+                        previewPossible = false;
+                    }
+                }
+
+                // Update count badge
+                if (countBadge) {
+                    countBadge.textContent = count > 0 ? count : '0';
+                    countBadge.className = count > 0 ? 'badge bg-primary feature-count' : 'badge bg-secondary feature-count';
+                }
+
+                // Update value preview
+                if (valuePreview) {
+                    if (previewValues.length > 0) {
+                        const previewText = previewValues.map(v =>
+                            typeof v === 'number' ? formatNumber(v) : v
+                        ).join(', ');
+                        const ellipsis = count > 10 ? ` ... (${count} total)` : '';
+                        valuePreview.textContent = `Preview: ${previewText}${ellipsis}`;
+                    } else {
+                        valuePreview.textContent = '';
+                    }
+                }
+            });
+
+            if (previewPossible && totalCombinations > 0) {
+                rowCountPreview.textContent = `Total Combinations: ${totalCombinations.toLocaleString()}`;
+                if (totalCombinations > 100000) {
+                    rowCountPreview.innerHTML += ' <span class="badge bg-warning text-dark">Warning: Large dataset</span>';
+                }
+            } else {
+                rowCountPreview.textContent = '';
+            }
+
+            // Update summary table
+            updateSummaryTable();
+        }
+
+        // Helper function: Generate range with step
+        function generateRange(min, max, step) {
+            const values = [];
+            for (let v = min; v <= max + step * 0.001; v += step) {
+                values.push(v);
+            }
+            return values;
+        }
+
+        // Helper function: Generate linspace (n equally spaced points)
+        function generateLinspace(min, max, n) {
+            const values = [];
+            const step = (max - min) / (n - 1);
+            for (let i = 0; i < Math.min(n, 10); i++) {
+                values.push(min + i * step);
+            }
+            return values;
+        }
+
+        // Helper function: Format number for preview
+        function formatNumber(num) {
+            if (Number.isInteger(num)) return num.toString();
+            return num.toFixed(4).replace(/\.?0+$/, '');
+        }
+
+        // Update the summary table
+        function updateSummaryTable() {
+            const tbody = document.querySelector('#feature-summary-table tbody');
+            if (!tbody) return;
+
+            tbody.innerHTML = '';
+            const featureRows = document.querySelectorAll('.feature-row');
+
+            featureRows.forEach((row, index) => {
+                const name = row.querySelector('input[name="feature_name"]')?.value || `Feature ${index + 1}`;
+                const featureType = row.querySelector('.feature-type-select')?.value || 'unknown';
+                const valuesContainer = row.querySelector('.feature-values');
+                const countBadge = row.querySelector('.feature-count');
+                const count = countBadge?.textContent || '0';
+
+                let params = '—';
+
+                if (featureType === 'continuous') {
+                    const min = valuesContainer.querySelector('input[name="min"]')?.value;
+                    const max = valuesContainer.querySelector('input[name="max"]')?.value;
+                    const modeToggle = valuesContainer.querySelector('.mode-toggle');
+                    const useNPoints = modeToggle?.checked;
+
+                    if (useNPoints) {
+                        const nPoints = valuesContainer.querySelector('.npoints-input')?.value;
+                        params = `Range: [${min || '?'}, ${max || '?'}], n_points: ${nPoints || '?'}`;
+                    } else {
+                        const step = valuesContainer.querySelector('.step-input')?.value;
+                        params = `Range: [${min || '?'}, ${max || '?'}], step: ${step || '?'}`;
+                    }
+                } else if (featureType === 'discrete' || featureType === 'categorical') {
+                    const values = valuesContainer.querySelector('input[name="values"]')?.value;
+                    if (values) {
+                        const valuesList = values.split(',').map(v => v.trim());
+                        const previewValues = valuesList.slice(0, 5).join(', ');
+                        params = valuesList.length > 5 ? `${previewValues} ... (+${valuesList.length - 5} more)` : previewValues;
+                    }
+                }
+
+                const typeLabels = {
+                    'continuous': '<span class="badge bg-info">Continuous</span>',
+                    'discrete': '<span class="badge bg-success">Discrete</span>',
+                    'categorical': '<span class="badge bg-warning text-dark">Categorical</span>'
+                };
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${name}</strong></td>
+                    <td>${typeLabels[featureType] || featureType}</td>
+                    <td><span class="badge bg-primary">${count}</span></td>
+                    <td><small>${params}</small></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // =========================================
+        // Auto-populate from Scenario Page
+        // =========================================
+        function checkForScenarioData() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('from_scenario') !== 'true') return;
+
+            const featuresJson = sessionStorage.getItem('scenarioFeatures');
+            const targetsJson = sessionStorage.getItem('scenarioTargets');
+            const materialName = sessionStorage.getItem('scenarioMaterialName');
+
+            if (!featuresJson) {
+                console.log('No scenario data found in sessionStorage');
+                return;
+            }
+
+            const features = JSON.parse(featuresJson);
+            const targets = targetsJson ? JSON.parse(targetsJson) : [];
+
+            console.log(`📊 Auto-populating from Scenario: ${features.length} features, ${targets.length} targets`);
+
+            // Set material name
+            if (materialName) {
+                document.getElementById('material-name').value = materialName;
+            }
+
+            // Add feature rows
+            features.forEach(feature => {
+                const newRow = featureRowTemplate.content.cloneNode(true);
+                featuresContainer.appendChild(newRow);
+
+                const row = featuresContainer.lastElementChild;
+                row.querySelector('input[name="feature_name"]').value = feature.name;
+
+                const typeSelect = row.querySelector('.feature-type-select');
+                typeSelect.value = feature.type || 'continuous';
+                updateFeatureValues(typeSelect);
+
+                // Populate values after the inputs are created
+                setTimeout(() => {
+                    const valuesContainer = row.querySelector('.feature-values');
+                    if (feature.type === 'continuous' && valuesContainer) {
+                        const minInput = valuesContainer.querySelector('input[name="min"]');
+                        const maxInput = valuesContainer.querySelector('input[name="max"]');
+                        const stepInput = valuesContainer.querySelector('input[name="step"]');
+                        if (minInput) minInput.value = feature.min;
+                        if (maxInput) maxInput.value = feature.max;
+                        if (stepInput) stepInput.value = feature.step;
+                    } else if (valuesContainer) {
+                        const valuesInput = valuesContainer.querySelector('input[name="values"]');
+                        if (valuesInput && feature.values) {
+                            valuesInput.value = feature.values.join(', ');
+                        }
+                    }
+                    updateRowCountPreview();
+                }, 10);
+            });
+
+            // Add target rows
+            targets.forEach(targetName => {
+                const newRow = targetRowTemplate.content.cloneNode(true);
+                targetsContainer.appendChild(newRow);
+                const row = targetsContainer.lastElementChild;
+                row.querySelector('input[name="target_name"]').value = targetName;
+            });
+
+            // Clear sessionStorage
+            sessionStorage.removeItem('scenarioFeatures');
+            sessionStorage.removeItem('scenarioTargets');
+            sessionStorage.removeItem('scenarioMaterialName');
+
+            // Show success message
+            setTimeout(() => {
+                updateRowCountPreview();
+                alert(`✅ Pre-populated ${features.length} features and ${targets.length} targets from Scenario data!\n\nReview the values and click "Generate & Save CSV" when ready.`);
+            }, 100);
+        }
+
+        // Call auto-populate check
+        checkForScenarioData();
+    });
 </script>
 {% endblock %}

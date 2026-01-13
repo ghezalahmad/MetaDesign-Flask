@@ -3,10 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import pandas as pd
+from typing import List, Optional, Tuple
 from sklearn.preprocessing import RobustScaler
 import streamlit as st # Using Streamlit components for logging/warnings
 
 # Assuming these internal imports are correct for your setup
+from app.models.base import SurrogateModel
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
 from app.pinn_utils import compute_physics_loss
 from app.utils.utils import calculate_novelty
@@ -198,6 +200,7 @@ def pinn_train(model, data, input_columns, target_columns, epochs, learning_rate
 
 def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     """Evaluates the PINN model on candidate samples using WEBSLAMD utility formula."""
+    from app.utils.webslamd_utility import calculate_webslamd_utility
 
     labeled_data = data.dropna(subset=target_columns)
     
@@ -221,28 +224,16 @@ def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
-    # Get labeled data statistics for normalization
-    labels_mean = labeled_data[target_columns].mean(skipna=True)
-    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
-    
-    preds_norm = np.zeros_like(predictions, dtype=float)
-    unc_norm = np.zeros_like(uncertainties, dtype=float)
-    
-    for i, col in enumerate(target_columns):
-        mean_val = labels_mean.iloc[i]
-        std_val = labels_std.iloc[i]
-        
-        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
-        
-        if max_or_min[i].lower() == "min":
-            preds_norm[:, i] *= -1
-        
-        preds_norm[:, i] *= weights[i]
-        unc_norm[:, i] = uncertainties[:, i] / std_val
-        unc_norm[:, i] *= weights[i]
-    
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    # 3. Calculate Utility using centralized function
+    utility_scores = calculate_webslamd_utility(
+        predictions=predictions,
+        uncertainties=uncertainties,
+        labeled_data=labeled_data,
+        target_columns=target_columns,
+        max_or_min=max_or_min,
+        weights=weights,
+        curiosity=curiosity
+    )
     candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
@@ -264,3 +255,128 @@ def evaluate_pinn(model, data, input_columns, target_columns, curiosity, weights
     # 7. Final Sort
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     return result_df
+
+
+# =============================================================================
+# SURROGATE MODEL WRAPPER (Implements SurrogateModel Interface)
+# =============================================================================
+
+class PINNSurrogate(SurrogateModel):
+    """
+    PINN Surrogate Model that implements the SurrogateModel interface.
+    
+    This wrapper class composes the PINNModel (nn.Module) and provides
+    a standardized interface for training and inference.
+    """
+    
+    def __init__(self, hidden_size: int = 128, num_layers: int = 3, 
+                 dropout_rate: float = 0.3, epochs: int = 100,
+                 learning_rate: float = 0.001, physics_loss_weight: float = 0.1,
+                 batch_size: int = 32):
+        """
+        Initialize PINNSurrogate.
+        
+        Args:
+            hidden_size: Number of hidden units per layer
+            num_layers: Number of hidden layers
+            dropout_rate: Dropout rate for regularization
+            epochs: Training epochs
+            learning_rate: Optimizer learning rate
+            physics_loss_weight: Weight for physics loss component
+            batch_size: Training batch size
+        """
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout_rate = dropout_rate
+        self.epochs = epochs
+        self.learning_rate = learning_rate
+        self.physics_loss_weight = physics_loss_weight
+        self.batch_size = batch_size
+        
+        # The underlying PyTorch model
+        self._model: Optional[PINNModel] = None
+    
+    def train(self, data: pd.DataFrame, input_columns: List[str],
+              target_columns: List[str], **kwargs) -> 'PINNSurrogate':
+        """
+        Train the PINN model on labeled data.
+        
+        Args:
+            data: Full dataset (labeled + unlabeled)
+            input_columns: List of feature column names
+            target_columns: List of target column names
+            **kwargs: Additional hyperparameters (override defaults)
+        
+        Returns:
+            self: The trained surrogate instance
+        """
+        # Override hyperparameters if provided
+        epochs = kwargs.get('epochs', self.epochs)
+        learning_rate = kwargs.get('learning_rate', self.learning_rate)
+        physics_loss_weight = kwargs.get('physics_loss_weight', self.physics_loss_weight)
+        batch_size = kwargs.get('batch_size', self.batch_size)
+        
+        # Create the underlying PyTorch model
+        input_size = len(input_columns)
+        output_size = len(target_columns)
+        self._model = PINNModel(
+            input_size=input_size,
+            output_size=output_size,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            dropout_rate=self.dropout_rate
+        )
+        
+        # Train using the existing pinn_train function
+        self._model, scaler_x, scaler_y = pinn_train(
+            model=self._model,
+            data=data,
+            input_columns=input_columns,
+            target_columns=target_columns,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            physics_loss_weight=physics_loss_weight,
+            batch_size=batch_size
+        )
+        
+        # Store training metadata
+        self.scaler_x = scaler_x
+        self.scaler_y = scaler_y
+        self.input_columns = input_columns
+        self.target_columns = target_columns
+        
+        # Store training stats for soft clipping
+        labeled_data = data.dropna(subset=target_columns)
+        self.store_training_stats(labeled_data, target_columns)
+        
+        self.is_trained = self._model.is_trained
+        return self
+    
+    def predict_with_uncertainty(self, X: pd.DataFrame,
+                                  input_columns: Optional[List[str]] = None,
+                                  num_samples: int = 50
+                                  ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        """
+        Generate predictions with uncertainty estimates using MC Dropout.
+        
+        Args:
+            X: Input features (DataFrame)
+            input_columns: Optional column names for ordering
+            num_samples: Number of MC samples for uncertainty
+        
+        Returns:
+            tuple: (mean_predictions, uncertainties, posterior_samples)
+        """
+        if not self.is_trained or self._model is None:
+            raise RuntimeError("Model is not trained yet.")
+        
+        # Use input_columns from training if not provided
+        cols = input_columns or self.input_columns
+        
+        # Delegate to the underlying PINNModel
+        return self._model.predict_with_uncertainty(X, input_columns=cols, num_samples=num_samples)
+    
+    def get_underlying_model(self) -> PINNModel:
+        """Get the underlying PyTorch PINNModel for advanced use."""
+        return self._model

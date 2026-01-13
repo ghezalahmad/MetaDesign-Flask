@@ -45,6 +45,7 @@ class DKLModel:
         self.scaler_x = StandardScaler()
         self.scaler_y = StandardScaler()
         self.target_columns = []
+        self.input_columns = []  # Store input column names for consistency
         self.is_trained = False
         self.alpha = alpha
 
@@ -59,6 +60,7 @@ class DKLModel:
         NOTE: In a true DKL implementation (e.g., GPyTorch), the NN and GP would be trained jointly.
         Here, we use a simpler sequential approach for easier integration and stability.
         """
+        self.input_columns = X.columns.tolist()
         self.target_columns = y.columns.tolist()
         
         # 1. Prepare data (Scaling)
@@ -193,6 +195,8 @@ def evaluate_dkl_model(model: DKLModel, labeled_data: pd.DataFrame, candidate_in
     """
     Uses the trained DKL model to evaluate candidates using WEBSLAMD utility formula.
     """
+    from app.utils.webslamd_utility import calculate_webslamd_utility
+    
     logging.info("Evaluating candidates with DKL using WEBSLAMD utility formula.")
     
     # 1. Get predictions and uncertainties from the DKL model
@@ -205,27 +209,16 @@ def evaluate_dkl_model(model: DKLModel, labeled_data: pd.DataFrame, candidate_in
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
-    labels_mean = labeled_data[target_columns].mean(skipna=True)
-    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
-    
-    preds_norm = np.zeros_like(predictions, dtype=float)
-    unc_norm = np.zeros_like(uncertainties, dtype=float)
-    
-    for i, col in enumerate(target_columns):
-        mean_val = labels_mean.iloc[i]
-        std_val = labels_std.iloc[i]
-        
-        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
-        
-        if max_or_min[i].lower() == "min":
-            preds_norm[:, i] *= -1
-        
-        preds_norm[:, i] *= weights[i]
-        unc_norm[:, i] = uncertainties[:, i] / std_val
-        unc_norm[:, i] *= weights[i]
-    
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    # 3. Calculate Utility using centralized function
+    utility_scores = calculate_webslamd_utility(
+        predictions=predictions,
+        uncertainties=uncertainties,
+        labeled_data=labeled_data,
+        target_columns=target_columns,
+        max_or_min=max_or_min,
+        weights=weights,
+        curiosity=curiosity
+    )
     candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
     

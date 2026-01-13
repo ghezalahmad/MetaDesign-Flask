@@ -345,7 +345,8 @@ def multi_objective_bayesian_optimization(
     acquisition: str = "UCB",
     strategy: str = "weighted_sum",
     surrogate_model=None,
-    input_columns=None
+    input_columns=None,
+    novelty_weight: float = 0.1
 ):
     # Handle data dimensionality
     train_targets = np.array(train_targets)
@@ -508,7 +509,7 @@ def multi_objective_bayesian_optimization(
         novelty_scores = calculate_novelty(candidate_features, labeled_features)
         if novelty_scores is not None and np.all(np.isfinite(novelty_scores)):
             novelty_scores = (novelty_scores - np.min(novelty_scores)) / (np.max(novelty_scores) - np.min(novelty_scores) + 1e-12)
-            acq_values_total += 0.1 * curiosity * novelty_scores
+            acq_values_total += novelty_weight * curiosity * novelty_scores
     except Exception as e:
         logging.warning(f"Novelty calculation failed: {e}")
 

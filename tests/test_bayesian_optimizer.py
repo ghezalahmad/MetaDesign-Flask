@@ -17,9 +17,9 @@ class TestBayesianOptimizer(unittest.TestCase):
         optimizer = BayesianOptimizer(bounds=self.bounds)
         optimizer.fit(self.X_train, self.y_train)
         X_test = np.array([[0.5, 0.5]])
-        mu, sigma = optimizer._get_surrogate_prediction(X_test)
-        self.assertEqual(mu.shape, (1,))
-        self.assertEqual(sigma.shape, (1,))
+        mu, sigma, _ = optimizer._get_surrogate_prediction(X_test)
+        self.assertEqual(mu.shape, (1, 1))  # Now returns (N, 1) shaped arrays
+        self.assertEqual(sigma.shape, (1, 1))
 
     def test_multi_objective_bayesian_optimization_with_surrogate(self):
         model = RFModel(n_estimators=10)

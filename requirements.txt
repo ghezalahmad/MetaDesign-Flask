@@ -5,6 +5,7 @@
 # Core Flask
 flask>=2.3.0
 flask-compress>=1.13
+flask-limiter>=3.5.0
 werkzeug>=2.3.0
 
 # Data Processing
@@ -37,3 +38,7 @@ requests>=2.31.0
 
 # Utilities
 python-dateutil>=2.8.0
+python-dotenv>=1.0.0
+
+# MLOps - Experiment Tracking (optional)
+# mlflow>=2.9.0  # Uncomment to enable MLflow experiment tracking

@@ -1,66 +1,149 @@
 {% extends "base.html" %}
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
-  <h3>📊 Scenario Management</h3>
-  <p class="text-muted">Edit, add, or update experimental scenarios. Changes are saved automatically.</p>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h3><i class="bi bi-clipboard-data"></i> Scenario Management</h3>
+      <p class="text-muted mb-0">Edit, add, or update experimental scenarios. Changes are saved automatically.</p>
+    </div>
+    <div class="btn-group">
+      <button id="generateDesignSpace" class="btn btn-primary">
+        <i class="bi bi-grid-3x3-gap"></i> Generate Design Space
+      </button>
+    </div>
+  </div>
 
-  <table id="scenarioTable" class="table table-striped table-bordered">
-    <thead>
-      <tr>
-        {% for col in columns %}
-          <th>{{ col }}</th>
-        {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in data %}
-      <tr>
-        {% for col in columns %}
-          {% if col == "Scenario" %}
+  <div class="card">
+    <div class="card-body">
+      <table id="scenarioTable" class="table table-striped table-bordered table-hover">
+        <thead class="table-light">
+          <tr>
+            {% for col in columns %}
+            <th>{{ col }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in data %}
+          <tr>
+            {% for col in columns %}
+            {% if col == "Scenario" %}
             <td contenteditable="false">{{ row[col] }}</td>
-          {% else %}
+            {% else %}
             <td contenteditable="true">{{ row[col] }}</td>
-          {% endif %}
-        {% endfor %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+            {% endif %}
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer">
+      <button id="addRow" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-plus-lg"></i> Add Scenario
+      </button>
+      <button id="saveChanges" class="btn btn-sm btn-success">
+        <i class="bi bi-check-lg"></i> Save Scenarios
+      </button>
+    </div>
+  </div>
 
-  <button id="addRow" class="btn btn-sm btn-primary mt-2">➕ Add Scenario</button>
-  <button id="saveChanges" class="btn btn-sm btn-success mt-2">💾 Save Scenarios</button>
+  <!-- Info Card -->
+  <div class="card mt-4 border-info">
+    <div class="card-header bg-info text-white">
+      <i class="bi bi-info-circle"></i> How it works
+    </div>
+    <div class="card-body">
+      <p class="mb-2"><strong>Generate Design Space</strong> will analyze your scenario data and:</p>
+      <ul class="mb-0">
+        <li>Extract numeric columns as features (with auto-calculated min/max/step)</li>
+        <li>Identify cost/coverage columns as optimization targets</li>
+        <li>Pre-populate the Design Space Builder for quick generation</li>
+      </ul>
+    </div>
+  </div>
 </div>
 
 <script>
-document.getElementById("addRow").addEventListener("click", function() {
-  const table = document.getElementById("scenarioTable").getElementsByTagName("tbody")[0];
-  const newRow = table.insertRow();
-  const colCount = table.rows[0].cells.length;
-  for (let i = 0; i < colCount; i++) {
-    const cell = newRow.insertCell(i);
-    cell.contentEditable = i !== 0; // first col not editable (Scenario name)
-    cell.textContent = i === 0 ? `Scenario ${table.rows.length}` : "";
-  }
-});
+  document.getElementById("addRow").addEventListener("click", function () {
+    const table = document.getElementById("scenarioTable").getElementsByTagName("tbody")[0];
+    const newRow = table.insertRow();
+    const colCount = table.rows[0].cells.length;
+    for (let i = 0; i < colCount; i++) {
+      const cell = newRow.insertCell(i);
+      cell.contentEditable = i !== 0;
+      cell.textContent = i === 0 ? `Scenario ${table.rows.length}` : "";
+    }
+  });
 
-document.getElementById("saveChanges").addEventListener("click", function() {
-  const table = document.getElementById("scenarioTable");
-  const rows = Array.from(table.querySelectorAll("tbody tr"));
-  const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent);
-  const data = rows.map(row => Array.from(row.cells).map(cell => cell.textContent.trim()));
-  fetch("/scenario", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data)
-  }).then(res => res.json()).then(res => alert(res.message));
-});
+  document.getElementById("saveChanges").addEventListener("click", function () {
+    const table = document.getElementById("scenarioTable");
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent);
+    const data = rows.map(row => Array.from(row.cells).map(cell => cell.textContent.trim()));
 
-document.querySelectorAll("#scenarioTable tbody tr").forEach(row => {
-  const scenarioName = row.cells[0].textContent;
-  if (scenarioName.includes("(Selected Scenario)")) {
-    row.style.backgroundColor = "#dff0d8";
-    row.style.fontWeight = "bold";
-  }
-});
+    fetch("/scenario", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          alert("✅ " + res.message);
+        } else {
+          alert("❌ Error: " + (res.error || "Unknown error"));
+        }
+      });
+  });
+
+  // Generate Design Space button
+  document.getElementById("generateDesignSpace").addEventListener("click", async function () {
+    this.disabled = true;
+    this.innerHTML = '<i class="bi bi-hourglass-split"></i> Analyzing...';
+
+    try {
+      const response = await fetch("/api/scenario-to-design-space");
+      const data = await response.json();
+
+      if (!data.success) {
+        alert("Error: " + (data.error || "Could not analyze scenario"));
+        return;
+      }
+
+      // Store in sessionStorage for the Design Space page to read
+      sessionStorage.setItem('scenarioFeatures', JSON.stringify(data.features));
+      sessionStorage.setItem('scenarioTargets', JSON.stringify(data.suggested_targets));
+      sessionStorage.setItem('scenarioMaterialName', data.material_name);
+
+      // Show summary and confirm
+      const featureCount = data.features.length;
+      const targetCount = data.suggested_targets.length;
+
+      if (confirm(`Found ${featureCount} features and ${targetCount} potential targets.\n\nContinue to Design Space Builder?`)) {
+        window.location.href = "/design-space?from_scenario=true";
+      }
+
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Failed to analyze scenario data");
+    } finally {
+      this.disabled = false;
+      this.innerHTML = '<i class="bi bi-grid-3x3-gap"></i> Generate Design Space';
+    }
+  });
+
+  // Highlight selected scenario row
+  document.querySelectorAll("#scenarioTable tbody tr").forEach(row => {
+    const scenarioName = row.cells[0].textContent;
+    if (scenarioName.includes("(Selected Scenario)")) {
+      row.style.backgroundColor = "#d4edda";
+      row.style.fontWeight = "bold";
+    }
+  });
 </script>
 {% endblock %}

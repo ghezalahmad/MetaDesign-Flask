@@ -34,12 +34,15 @@ class HybridEngine:
         # ML_MODE: Pure ML - train surrogate, calculate utility
         # ============================================================
         if mode == "ML_MODE":
+            acquisition = config.get('acquisition_function', 'webslamd')
             result_df = MLEngine.run_experiment(
                 data, 
                 config.get('model'), 
                 input_columns, 
                 target_columns_config,
-                curiosity=float(config.get('curiosity', 0.5))
+                curiosity=float(config.get('curiosity', 0.5)),
+                apriori_config=config.get('apriori_columns'),
+                acquisition_function=acquisition
             )
             # Record trajectory for ML mode
             cls._record_trajectory(result_df, input_columns, mode)
@@ -201,7 +204,8 @@ class HybridEngine:
         """Helper to create LLM agent from settings."""
         llm_provider = SettingsManager.get_setting("llm_provider", "ollama")
         ollama_model = SettingsManager.get_setting("ollama_model", "mistral:latest")
-        mistral_api_key = SettingsManager.get_setting("mistral_api_key", "")
+        # Use get_api_key: checks MISTRAL_API_KEY env var first, then settings file
+        mistral_api_key = SettingsManager.get_api_key("mistral_api_key", "MISTRAL_API_KEY")
         
         return LLMAgent(
             provider=llm_provider,

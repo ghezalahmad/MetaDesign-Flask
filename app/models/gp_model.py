@@ -1,14 +1,16 @@
 import pandas as pd
 import numpy as np
+from typing import List, Optional, Tuple
 from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
 from sklearn.neighbors import NearestNeighbors
 import logging
 
-# Assuming this internal import path is correct for your setup
+# Internal imports
+from app.models.base import SurrogateModel
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
-from app.utils.utils import calculate_novelty # Reusing the shared utility function
+from app.utils.utils import calculate_novelty
 
 class GPModel:
     """
@@ -111,7 +113,7 @@ class GPModel:
         predictions_unscaled = self.scaler_y.inverse_transform(predictions_scaled_combined)
 
         # The standard deviation from GP is of the SCALED data. 
-        # To get the uncertainty in the UNCALED space, we must rescale the standard deviation.
+        # To get the uncertainty in the UNSCALED space, we must rescale the standard deviation.
         # std_unscaled = std_scaled * scale_factor_y
         
         # Get the scaling factor for each target column (standard deviation of the training data)
@@ -148,6 +150,8 @@ def evaluate_gp_model(
     """
     Uses the trained GP model to evaluate candidates using WEBSLAMD utility formula.
     """
+    from app.utils.webslamd_utility import calculate_webslamd_utility
+    
     if not model.is_trained:
         logging.warning("GPModel is not trained. Evaluation skipped.")
         return candidate_inputs.copy()
@@ -163,27 +167,16 @@ def evaluate_gp_model(
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 4. WEBSLAMD-EXACT UTILITY CALCULATION
-    labels_mean = labeled_data[target_columns].mean(skipna=True)
-    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
-    
-    preds_norm = np.zeros_like(predictions, dtype=float)
-    unc_norm = np.zeros_like(uncertainties, dtype=float)
-    
-    for i, col in enumerate(target_columns):
-        mean_val = labels_mean.iloc[i]
-        std_val = labels_std.iloc[i]
-        
-        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
-        
-        if max_or_min[i].lower() == "min":
-            preds_norm[:, i] *= -1
-        
-        preds_norm[:, i] *= weights[i]
-        unc_norm[:, i] = uncertainties[:, i] / std_val
-        unc_norm[:, i] *= weights[i]
-    
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    # 4. Calculate Utility using centralized function
+    utility_scores = calculate_webslamd_utility(
+        predictions=predictions,
+        uncertainties=uncertainties,
+        labeled_data=labeled_data,
+        target_columns=target_columns,
+        max_or_min=max_or_min,
+        weights=weights,
+        curiosity=curiosity
+    )
     candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
@@ -206,3 +199,98 @@ def evaluate_gp_model(
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
     
     return result_df
+
+
+# =============================================================================
+# SURROGATE MODEL WRAPPER (Implements SurrogateModel Interface)
+# =============================================================================
+
+class GPSurrogate(SurrogateModel):
+    """
+    Gaussian Process Surrogate Model that implements the SurrogateModel interface.
+    
+    This wrapper class composes the GPModel and provides
+    a standardized interface for training and inference.
+    """
+    
+    def __init__(self, kernel=None, alpha: float = 1e-10, 
+                 normalize_y: bool = True, random_state: int = 42):
+        """
+        Initialize GPSurrogate.
+        
+        Args:
+            kernel: GP kernel (default: RBF + WhiteKernel)
+            alpha: Noise level
+            normalize_y: Whether to normalize targets
+            random_state: Random seed
+        """
+        super().__init__()
+        self.kernel = kernel
+        self.alpha = alpha
+        self.normalize_y = normalize_y
+        self.random_state = random_state
+        
+        # The underlying GPModel
+        self._model: Optional[GPModel] = None
+    
+    def train(self, data: pd.DataFrame, input_columns: List[str],
+              target_columns: List[str], **kwargs) -> 'GPSurrogate':
+        """
+        Train the GP model on labeled data.
+        
+        Args:
+            data: Full dataset (labeled + unlabeled)
+            input_columns: List of feature column names
+            target_columns: List of target column names
+            **kwargs: Additional hyperparameters
+        
+        Returns:
+            self: The trained surrogate instance
+        """
+        # Create and train the underlying model
+        self._model = GPModel(
+            kernel=self.kernel,
+            alpha=self.alpha,
+            normalize_y=self.normalize_y,
+            random_state=self.random_state
+        )
+        
+        self._model.train(data, input_columns, target_columns)
+        
+        # Store training metadata
+        self.scaler_x = self._model.scaler_x
+        self.scaler_y = self._model.scaler_y  # Store actual scaler for consistency
+        self.input_columns = input_columns
+        self.target_columns = target_columns
+        
+        # Store training stats for soft clipping
+        labeled_data = data.dropna(subset=target_columns)
+        self.store_training_stats(labeled_data, target_columns)
+        
+        self.is_trained = self._model.is_trained
+        return self
+    
+    def predict_with_uncertainty(self, X: pd.DataFrame,
+                                  input_columns: Optional[List[str]] = None,
+                                  num_samples: int = 50
+                                  ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        """
+        Generate predictions with uncertainty estimates.
+        
+        Args:
+            X: Input features (DataFrame)
+            input_columns: Optional column names for ordering
+            num_samples: Not used by GP (included for interface compatibility)
+        
+        Returns:
+            tuple: (mean_predictions, uncertainties, None)
+        """
+        if not self.is_trained or self._model is None:
+            raise RuntimeError("Model is not trained yet.")
+        
+        cols = input_columns or self.input_columns
+        return self._model.predict_with_uncertainty(X, input_columns=cols, num_samples=num_samples)
+    
+    def get_underlying_model(self) -> GPModel:
+        """Get the underlying GPModel for advanced use."""
+        return self._model

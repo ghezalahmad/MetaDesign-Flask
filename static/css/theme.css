@@ -1,138 +1,461 @@
+/* ===========================================
+   MetaDesign App - Unified Light Theme
+   Matches Bootstrap dashboard styling
+   =========================================== */
+
 :root {
-    --primary-bg: #0a0e27;
-    --primary-text: #ffffff;
-    --gradient-start: #667eea;
-    --gradient-end: #764ba2;
-    --card-bg: rgba(255, 255, 255, 0.05);
-    --border-color: rgba(255, 255, 255, 0.2);
+    /* Primary Colors - Professional Blue */
+    --primary-color: #0d6efd;
+    --primary-dark: #0a58ca;
+    --primary-light: #6ea8fe;
+
+    /* Accent Colors */
+    --accent-purple: #6f42c1;
+    --accent-green: #198754;
+    --accent-cyan: #0dcaf0;
+
+    /* Backgrounds */
+    --bg-body: #f8f9fa;
+    --bg-white: #ffffff;
+    --bg-card: #ffffff;
+    --bg-header: #ffffff;
+
+    /* Text Colors */
+    --text-primary: #212529;
+    --text-secondary: #6c757d;
+    --text-muted: #adb5bd;
+
+    /* Borders & Shadows */
+    --border-color: #dee2e6;
+    --shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    --shadow-md: 0 0.5rem 1rem rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 1rem 3rem rgba(0, 0, 0, 0.175);
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-blue: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
 }
+
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background-color: var(--primary-bg);
-    color: var(--primary-text);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background-color: var(--bg-body);
+    color: var(--text-primary);
     margin: 0;
     line-height: 1.6;
 }
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
     padding: 0 20px;
 }
-/* Header and Navigation */
+
+/* ===========================================
+   Header and Navigation
+   =========================================== */
 .header {
-    background: var(--primary-bg);
+    background: var(--bg-header);
     padding: 1rem 0;
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 0;
     z-index: 1000;
+    box-shadow: var(--shadow-sm);
 }
+
 .navbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
+
 .logo {
-    font-size: 1.8rem;
-    font-weight: bold;
-    background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    text-decoration: none;
+    letter-spacing: -0.5px;
 }
+
+.logo:hover {
+    color: var(--primary-dark);
+}
+
 .nav-links {
     list-style: none;
     display: flex;
     gap: 2rem;
     margin: 0;
+    padding: 0;
 }
+
 .nav-links a {
-    color: var(--primary-text);
+    color: var(--text-primary);
     text-decoration: none;
     font-weight: 500;
-    transition: color 0.3s ease;
-}
-.nav-links a:hover {
-    color: var(--gradient-start);
+    padding: 0.5rem 0;
+    transition: color 0.2s ease;
+    position: relative;
 }
 
-/* Hero Section */
+.nav-links a:hover {
+    color: var(--primary-color);
+}
+
+.nav-links a::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: var(--primary-color);
+    transition: width 0.2s ease;
+}
+
+.nav-links a:hover::after {
+    width: 100%;
+}
+
+/* ===========================================
+   Hero Section
+   =========================================== */
 .hero {
     text-align: center;
-    padding: 100px 0;
-}
-.hero h1 {
-    font-size: 3.5rem;
-    margin-bottom: 1rem;
-    background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-.hero p {
-    font-size: 1.2rem;
-    max-width: 600px;
-    margin: 0 auto 2rem auto;
-    color: rgba(255, 255, 255, 0.8);
-}
-.btn {
-    display: inline-block;
-    padding: 0.8rem 2rem;
-    border-radius: 50px;
-    text-decoration: none;
-    font-weight: 600;
-    transition: transform 0.3s ease;
-}
-.btn-gradient {
-    background-image: linear-gradient(to right, var(--gradient-start) 0%, var(--gradient-end) 51%, var(--gradient-start) 100%);
-    background-size: 200% auto;
-    color: white;
-    border: none;
-}
-.btn-gradient:hover {
-    background-position: right center;
-    transform: scale(1.05);
+    padding: 80px 0;
+    background: linear-gradient(180deg, var(--bg-white) 0%, var(--bg-body) 100%);
 }
 
-/* Features Section */
+.hero h1 {
+    font-size: 2.75rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    letter-spacing: -1px;
+}
+
+.hero h1 span {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.hero p {
+    font-size: 1.25rem;
+    max-width: 650px;
+    margin: 0 auto 2rem auto;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+/* ===========================================
+   Buttons
+   =========================================== */
+.btn {
+    display: inline-block;
+    padding: 0.75rem 1.75rem;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-gradient {
+    background: var(--gradient-blue);
+    color: white;
+    box-shadow: var(--shadow-sm);
+}
+
+.btn-gradient:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    color: white;
+}
+
+.btn-outline {
+    background: transparent;
+    color: var(--primary-color);
+    border: 2px solid var(--primary-color);
+}
+
+.btn-outline:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* ===========================================
+   Features Section
+   =========================================== */
 .features {
     padding: 60px 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2rem;
-}
-.feature-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 2rem;
-    text-align: center;
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-.feature-card:hover {
-    transform: translateY(-10px);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-}
-.feature-card h3 {
-    font-size: 1.5rem;
-    margin-top: 1rem;
-    background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    gap: 1.5rem;
 }
 
-/* Footer */
+.feature-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.feature-card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+}
+
+.feature-card svg {
+    color: var(--primary-color);
+    margin-bottom: 1rem;
+}
+
+.feature-card h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0.5rem 0;
+    color: var(--text-primary);
+}
+
+.feature-card p {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* ===========================================
+   Footer
+   =========================================== */
 .footer {
     text-align: center;
     padding: 2rem 0;
     margin-top: 40px;
     border-top: 1px solid var(--border-color);
+    background: var(--bg-white);
+    color: var(--text-secondary);
 }
 
-/* Responsive */
+.footer p {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+/* ===========================================
+   Dashboard Specific Overrides
+   =========================================== */
+
+/* Dashboard main content area - subtle gray background */
+.container-fluid {
+    background-color: #f0f2f5;
+    min-height: calc(100vh - 120px);
+    padding-bottom: 2rem;
+}
+
+/* Cards in dashboard */
+.card {
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-white);
+    transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.card-header {
+    background: linear-gradient(to bottom, #ffffff, #f8f9fa);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    padding: 0.75rem 1rem;
+}
+
+.card-title {
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.card-body {
+    padding: 1.25rem;
+}
+
+/* Results section - slightly darker for depth */
+#results-section {
+    background: linear-gradient(to bottom, #e9ecef, #f0f2f5);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-top: 1.5rem;
+}
+
+#results-section .card {
+    border: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Table styling */
+.table {
+    margin-bottom: 0;
+}
+
+.table thead th {
+    background: #f8f9fa;
+    border-bottom: 2px solid var(--border-color);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.table-hover tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+/* Button styling for dashboard */
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* Form controls */
+.form-control,
+.form-select {
+    border-radius: 6px;
+    border-color: var(--border-color);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+}
+
+/* Plot containers */
+#tsne-plot,
+#scatter-plot,
+#uncertainty-plot,
+#history-plot,
+#utility-surface-plot,
+#trajectory-plot,
+#distance-plot,
+#additional-plot-container {
+    background: white;
+    border-radius: 8px;
+}
+
+/* Mode Colors - Consistent across app */
+.mode-ml {
+    color: #0077B6;
+}
+
+.mode-llm {
+    color: #6f42c1;
+}
+
+.mode-hybrid {
+    color: #198754;
+}
+
+.bg-mode-ml {
+    background-color: #0077B6;
+}
+
+.bg-mode-llm {
+    background-color: #6f42c1;
+}
+
+.bg-mode-hybrid {
+    background-color: #198754;
+}
+
+/* Custom btn-outline-purple for LLM mode */
+.btn-outline-purple {
+    color: #6f42c1;
+    border-color: #6f42c1;
+    background-color: transparent;
+}
+
+.btn-outline-purple:hover {
+    color: #fff;
+    background-color: #6f42c1;
+    border-color: #6f42c1;
+}
+
+/* Active states for mode toggle buttons */
+.btn-check:checked+.btn-outline-primary {
+    color: #fff !important;
+    background-color: #0d6efd !important;
+    border-color: #0d6efd !important;
+}
+
+.btn-check:checked+.btn-outline-purple {
+    color: #fff !important;
+    background-color: #6f42c1 !important;
+    border-color: #6f42c1 !important;
+}
+
+.btn-check:checked+.btn-outline-success {
+    color: #fff !important;
+    background-color: #198754 !important;
+    border-color: #198754 !important;
+}
+
+/* ===========================================
+   Responsive Design
+   =========================================== */
 @media (max-width: 768px) {
     .nav-links {
-        display: none; /* Simplistic: hide for mobile */
+        display: none;
     }
+
+    .hero {
+        padding: 50px 0;
+    }
+
     .hero h1 {
-        font-size: 2.5rem;
+        font-size: 2rem;
     }
+
+    .hero p {
+        font-size: 1rem;
+        padding: 0 1rem;
+    }
+
+    .features {
+        grid-template-columns: 1fr;
+        padding: 40px 20px;
+    }
+
+    .feature-card {
+        padding: 1.5rem;
+    }
+}
+
+/* ===========================================
+   Utility Classes
+   =========================================== */
+.text-gradient {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.shadow-hover {
+    transition: box-shadow 0.2s ease;
+}
+
+.shadow-hover:hover {
+    box-shadow: var(--shadow-md);
 }

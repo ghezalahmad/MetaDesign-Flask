@@ -9,9 +9,13 @@
     "mistral_api_key": "",
     "cohere_api_key": "",
     "llm_provider": "ollama",
-    "ollama_model": "mistral:instruct",
+    "ollama_model": "mistral:latest",
     "llm_strategy": "balanced",
-    "current_dataset": "MaterialsDiscoveryExampleData.csv",
+    "rl_weight": 0.3,
+    "mlflow_enabled": true,
+    "mlflow_tracking_uri": "",
+    "mlflow_experiment_name": "MetaDesign",
+    "current_dataset": "MaterialsDiscoveryExampleData_1.csv",
     "current_dataset_columns": [
         "Idx_Sample",
         "SiO2",
@@ -30,5 +34,6 @@
         "Slump - Target (mm)",
         "CO2 (kg/t) - A-priori Information",
         "fc 28-d - Target (MPa)"
-    ]
+    ],
+    "test_key": "test_value"
 }

@@ -114,6 +114,8 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
     Returns a candidate_df with predictions, uncertainties, Utility, Novelty, etc.
     This version is hardened to ALWAYS provide a numeric 'Utility' column.
     """
+    from app.utils.webslamd_utility import calculate_webslamd_utility
+    
     # 1. Split labeled vs candidate rows
     labeled_data = data.dropna(subset=target_columns)
     candidate_df = data[data[target_columns[0]].isnull()].copy()
@@ -134,50 +136,26 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 4. WEBSLAMD-EXACT UTILITY CALCULATION
-    # Get labeled data statistics for normalization  
-    labels_mean = labeled_data[target_columns].mean(skipna=True)
-    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    # 4. Calculate Utility using centralized function
+    utility_scores = calculate_webslamd_utility(
+        predictions=predictions,
+        uncertainties=uncertainties,
+        labeled_data=labeled_data,
+        target_columns=target_columns,
+        max_or_min=max_or_min_targets,
+        weights=weights_targets,
+        curiosity=curiosity
+    )
     
     # DEBUG: Print values to understand the calculation
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
     print(f"\n📊 UTILITY DEBUG:")
     print(f"   Labels mean: {dict(labels_mean)}")
     print(f"   Labels std: {dict(labels_std)}")
     print(f"   Predictions range: {predictions.min():.2f} to {predictions.max():.2f}")
     print(f"   Curiosity: {curiosity}")
     print(f"   Max/Min targets: {max_or_min_targets}")
-    
-    # Normalize predictions using LABELED DATA mean/std
-    preds_norm = np.zeros_like(predictions, dtype=float)
-    unc_norm = np.zeros_like(uncertainties, dtype=float)
-    
-    for i, col in enumerate(target_columns):
-        col_vals = predictions[:, i]
-        mean_val = labels_mean.iloc[i]
-        std_val = labels_std.iloc[i]
-        
-        preds_norm[:, i] = (col_vals - mean_val) / std_val
-        
-        # WEBSLAMD: Invert for minimization targets
-        if max_or_min_targets[i].lower() == "min":
-            preds_norm[:, i] *= -1
-        
-        # Apply weight
-        preds_norm[:, i] *= weights_targets[i]
-        
-        # Uncertainty scaled by labels_std
-        unc_norm[:, i] = uncertainties[:, i] / std_val
-        unc_norm[:, i] *= weights_targets[i]
-        
-        print(f"   Target '{col}': pred_norm range = [{preds_norm[:, i].min():.2f}, {preds_norm[:, i].max():.2f}]")
-    
-    # WEBSLAMD utility formula
-    pred_sum = preds_norm.sum(axis=1)
-    unc_sum = unc_norm.sum(axis=1)
-    utility_scores = pred_sum + curiosity * unc_sum
-    
-    print(f"   Pred sum range: [{pred_sum.min():.2f}, {pred_sum.max():.2f}]")
-    print(f"   Unc sum range: [{unc_sum.min():.2f}, {unc_sum.max():.2f}]")
     print(f"   Final utility range: [{utility_scores.min():.2f}, {utility_scores.max():.2f}]")
     
     candidate_df["Utility"] = utility_scores

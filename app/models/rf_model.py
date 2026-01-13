@@ -1,8 +1,11 @@
 import pandas as pd
+import numpy as np
+from typing import List, Optional, Tuple
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-import numpy as np
-# Assuming this internal import path is correct for your setup
+
+# Internal imports
+from app.models.base import SurrogateModel
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization 
 
 class RFModel:
@@ -93,6 +96,8 @@ def train_rf_model(data, input_columns, target_columns):
 
 def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, weights, max_or_min):
     """Evaluates the Random Forest model using WEBSLAMD utility formula."""
+    from app.utils.webslamd_utility import calculate_webslamd_utility
+    from app.utils.utils import calculate_novelty
 
     labeled_data = data.dropna(subset=target_columns)
     candidate_df = data[data[target_columns[0]].isnull()].copy()
@@ -114,27 +119,16 @@ def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, wei
         candidate_df[col] = predictions[:, i]
         candidate_df[f"Uncertainty ({col})"] = uncertainties[:, i]
 
-    # 3. WEBSLAMD-EXACT UTILITY CALCULATION
-    labels_mean = labeled_data[target_columns].mean(skipna=True)
-    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
-    
-    preds_norm = np.zeros_like(predictions, dtype=float)
-    unc_norm = np.zeros_like(uncertainties, dtype=float)
-    
-    for i, col in enumerate(target_columns):
-        mean_val = labels_mean.iloc[i]
-        std_val = labels_std.iloc[i]
-        
-        preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
-        
-        if max_or_min[i].lower() == "min":
-            preds_norm[:, i] *= -1
-        
-        preds_norm[:, i] *= weights[i]
-        unc_norm[:, i] = uncertainties[:, i] / std_val
-        unc_norm[:, i] *= weights[i]
-    
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    # 3. Calculate Utility using centralized function
+    utility_scores = calculate_webslamd_utility(
+        predictions=predictions,
+        uncertainties=uncertainties,
+        labeled_data=labeled_data,
+        target_columns=target_columns,
+        max_or_min=max_or_min,
+        weights=weights,
+        curiosity=curiosity
+    )
     candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 
@@ -144,7 +138,6 @@ def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, wei
     # 5. Calculate Novelty
     X_candidate_np = candidate_inputs.values
     X_labeled_np = labeled_data[input_columns].values
-    from app.utils.utils import calculate_novelty
     novelty_scores = calculate_novelty(X_candidate_np, X_labeled_np)
     candidate_df["Novelty"] = novelty_scores
 
@@ -158,3 +151,46 @@ def evaluate_rf_model(model, data, input_columns, target_columns, curiosity, wei
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
 
     return result_df
+
+
+# =============================================================================
+# SURROGATE MODEL WRAPPER (Implements SurrogateModel Interface)
+# =============================================================================
+
+class RFSurrogate(SurrogateModel):
+    """
+    Random Forest Surrogate Model that implements the SurrogateModel interface.
+    """
+    
+    def __init__(self, n_estimators: int = 100, random_state: int = 42):
+        super().__init__()
+        self.n_estimators = n_estimators
+        self.random_state = random_state
+        self._model: Optional[RFModel] = None
+    
+    def train(self, data: pd.DataFrame, input_columns: List[str],
+              target_columns: List[str], **kwargs) -> 'RFSurrogate':
+        self._model = RFModel(
+            n_estimators=kwargs.get('n_estimators', self.n_estimators),
+            random_state=kwargs.get('random_state', self.random_state)
+        )
+        self._model.train(data, input_columns, target_columns)
+        
+        self.scaler_x = self._model.scaler_x
+        self.scaler_y = self._model.scaler_y
+        self.input_columns = input_columns
+        self.target_columns = target_columns
+        
+        labeled_data = data.dropna(subset=target_columns)
+        self.store_training_stats(labeled_data, target_columns)
+        self.is_trained = self._model.is_trained
+        return self
+    
+    def predict_with_uncertainty(self, X: pd.DataFrame,
+                                  input_columns: Optional[List[str]] = None,
+                                  num_samples: int = 50
+                                  ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        if not self.is_trained or self._model is None:
+            raise RuntimeError("Model is not trained yet.")
+        cols = input_columns or self.input_columns
+        return self._model.predict_with_uncertainty(X, input_columns=cols, num_samples=num_samples)

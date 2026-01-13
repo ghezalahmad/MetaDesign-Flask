@@ -1,0 +1,668 @@
+{% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+    .cycle-card {
+        border-left: 4px solid #0d6efd;
+        margin-bottom: 1rem;
+    }
+
+    .cycle-card.completed {
+        border-left-color: #198754;
+    }
+
+    .sample-row:hover {
+        background-color: #f8f9fa;
+    }
+
+    .status-badge {
+        font-size: 0.75rem;
+    }
+
+    .lab-input {
+        max-width: 120px;
+    }
+
+    .plot-container {
+        min-height: 400px;
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2><i class="bi bi-clipboard-data"></i> Lab Results Tracker</h2>
+            <p class="text-muted">Track experimental cycles and record lab results</p>
+        </div>
+    </div>
+
+    <!-- Project Selection -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Select Project</label>
+                    <select class="form-select" id="project-select">
+                        <option value="">-- Select a project --</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Or Create New</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="new-project-name" placeholder="Project name">
+                        <button class="btn btn-primary" id="create-project-btn">
+                            <i class="bi bi-plus-lg"></i> Create
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div id="project-info" class="alert alert-info py-2 mb-0" style="display: none;">
+                        <strong>Dataset:</strong> <span id="dataset-path"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cycles Container -->
+    <div id="cycles-container">
+        <div class="alert alert-secondary text-center">
+            <i class="bi bi-folder2-open"></i> Select a project to view cycles
+        </div>
+    </div>
+
+    <!-- Plotting Section -->
+    <div class="card mt-4" id="plot-section" style="display: none;">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Data Visualization</h5>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Select Columns to Plot</label>
+                    <select multiple class="form-select" id="plot-columns" size="5"></select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Plot Type</label>
+                    <select class="form-select" id="plot-type">
+                        <option value="scatter">Scatter Plot</option>
+                        <option value="line">Line Chart</option>
+                        <option value="bar">Bar Chart</option>
+                        <option value="box">Box Plot</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button class="btn btn-success w-100" id="generate-plot-btn">
+                        <i class="bi bi-bar-chart"></i> Generate Plot
+                    </button>
+                </div>
+            </div>
+            <div id="results-plot" class="plot-container"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Cycle Template (cloned for each cycle) -->
+<template id="cycle-template">
+    <div class="card cycle-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="bi bi-arrow-repeat"></i> Cycle <span class="cycle-number"></span>
+                <span class="badge bg-secondary ms-2 sample-count"></span>
+            </h6>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-success sync-all-btn" title="Sync all to CSV">
+                    <i class="bi bi-cloud-upload"></i> Sync All
+                </button>
+                <button class="btn btn-outline-secondary" data-bs-toggle="collapse" title="Toggle">
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+        </div>
+        <div class="collapse show cycle-body">
+            <div class="card-body p-0">
+                <!-- Color Legend -->
+                <div class="px-3 py-2 bg-light border-bottom">
+                    <small class="text-muted">
+                        <strong>Legend:</strong>
+                        <span class="badge me-2" style="background-color:#9b59b6;color:white">Target Prediction</span>
+                        <span class="badge bg-info text-dark me-2">Uncertainty</span>
+                        <span class="badge bg-warning text-dark me-2">Novelty</span>
+                        <span class="badge bg-success text-white me-2">Utility</span>
+                    </small>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>IDX</th>
+                                <th>Status</th>
+                                <th class="input-cols-header"><!-- Input columns --></th>
+                                <th class="pred-cols-header"><!-- Prediction columns --></th>
+                                <th class="lab-cols-header"><!-- Lab result columns --></th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="samples-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- Sample Row Template -->
+<template id="sample-row-template">
+    <tr class="sample-row">
+        <td class="idx-cell"></td>
+        <td class="status-cell"></td>
+        <td class="input-cells"></td>
+        <td class="pred-cells"></td>
+        <td class="lab-cells"></td>
+        <td class="action-cells">
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-primary save-btn" title="Save">
+                    <i class="bi bi-check-lg"></i>
+                </button>
+                <button class="btn btn-outline-success sync-btn" title="Sync to CSV">
+                    <i class="bi bi-cloud-upload"></i>
+                </button>
+                <button class="btn btn-outline-danger delete-btn" title="Delete sample">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </td>
+    </tr>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        let currentProjectId = null;
+        let currentProject = null;
+        let allColumns = new Set();
+
+        // Load projects on page load
+        loadProjects();
+
+        // Event Listeners
+        document.getElementById('project-select').addEventListener('change', function () {
+            currentProjectId = this.value ? parseInt(this.value) : null;
+            if (currentProjectId) {
+                loadProject(currentProjectId);
+            } else {
+                document.getElementById('cycles-container').innerHTML =
+                    '<div class="alert alert-secondary text-center"><i class="bi bi-folder2-open"></i> Select a project to view cycles</div>';
+                document.getElementById('plot-section').style.display = 'none';
+            }
+        });
+
+        document.getElementById('create-project-btn').addEventListener('click', createProject);
+        document.getElementById('generate-plot-btn').addEventListener('click', generatePlot);
+
+        // Functions
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/results/projects');
+                const data = await response.json();
+
+                const select = document.getElementById('project-select');
+                select.innerHTML = '<option value="">-- Select a project --</option>';
+
+                data.projects.forEach(p => {
+                    const option = document.createElement('option');
+                    option.value = p.id;
+                    option.textContent = `${p.name} (${p.cycle_count} cycles)`;
+                    select.appendChild(option);
+                });
+            } catch (err) {
+                console.error('Error loading projects:', err);
+            }
+        }
+
+        async function createProject() {
+            const nameInput = document.getElementById('new-project-name');
+            const name = nameInput.value.trim();
+
+            if (!name) {
+                alert('Please enter a project name');
+                return;
+            }
+
+            // Get current dataset path from session or prompt
+            const datasetPath = prompt('Enter the path to the dataset CSV file:', '/path/to/dataset.csv');
+            if (!datasetPath) return;
+
+            try {
+                const response = await fetch('/api/results/projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, dataset_path: datasetPath })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    nameInput.value = '';
+                    await loadProjects();
+                    document.getElementById('project-select').value = data.project.id;
+                    loadProject(data.project.id);
+                } else {
+                    alert(data.error || 'Failed to create project');
+                }
+            } catch (err) {
+                console.error('Error creating project:', err);
+                alert('Error creating project');
+            }
+        }
+
+        async function loadProject(projectId) {
+            try {
+                const response = await fetch(`/api/results/projects/${projectId}`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert(data.error || 'Failed to load project');
+                    return;
+                }
+
+                currentProject = data.project;
+
+                // Show dataset info
+                document.getElementById('project-info').style.display = 'block';
+                document.getElementById('dataset-path').textContent = currentProject.dataset_path;
+
+                // Render cycles
+                renderCycles(currentProject.cycles);
+
+                // Show plot section
+                document.getElementById('plot-section').style.display = 'block';
+                populatePlotColumns();
+
+            } catch (err) {
+                console.error('Error loading project:', err);
+            }
+        }
+
+        function renderCycles(cycles) {
+            const container = document.getElementById('cycles-container');
+            container.innerHTML = '';
+            allColumns.clear();
+
+            if (cycles.length === 0) {
+                container.innerHTML = '<div class="alert alert-info text-center"><i class="bi bi-info-circle"></i> No cycles yet. Send samples from the Dashboard to create your first cycle.</div>';
+                return;
+            }
+
+            // Sort cycles by number descending (newest first)
+            cycles.sort((a, b) => b.cycle_number - a.cycle_number);
+
+            cycles.forEach(cycle => {
+                const cycleEl = renderCycle(cycle);
+                container.appendChild(cycleEl);
+            });
+        }
+
+        function renderCycle(cycle) {
+            const template = document.getElementById('cycle-template');
+            const cycleEl = template.content.cloneNode(true).firstElementChild;
+
+            cycleEl.querySelector('.cycle-number').textContent = cycle.cycle_number;
+            cycleEl.querySelector('.sample-count').textContent = `${cycle.sample_count} samples`;
+            cycleEl.dataset.cycleId = cycle.id;
+
+            // Check if all completed
+            if (cycle.completed_count === cycle.sample_count) {
+                cycleEl.classList.add('completed');
+            }
+
+            // Setup collapse toggle
+            const collapseBtn = cycleEl.querySelector('[data-bs-toggle="collapse"]');
+            const collapseTarget = cycleEl.querySelector('.cycle-body');
+            collapseBtn.addEventListener('click', () => {
+                collapseTarget.classList.toggle('show');
+                const icon = collapseBtn.querySelector('i');
+                icon.className = collapseTarget.classList.contains('show') ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
+            });
+
+            // Sync all button
+            cycleEl.querySelector('.sync-all-btn').addEventListener('click', () => syncAllSamples(cycle.id));
+
+            // Render samples with lab_result_columns from the cycle
+            if (cycle.samples && cycle.samples.length > 0) {
+                renderSamples(cycleEl, cycle.samples, cycle.lab_result_columns || []);
+            }
+
+            return cycleEl;
+        }
+
+        function renderSamples(cycleEl, samples, labResultColumns) {
+            const tbody = cycleEl.querySelector('.samples-tbody');
+            const headerRow = cycleEl.querySelector('thead tr');
+            tbody.innerHTML = '';
+
+            // Get column names from first sample
+            const firstSample = samples[0];
+            const inputCols = Object.keys(firstSample.row_data || {});
+            const predCols = Object.keys(firstSample.predictions || {});
+
+            // Lab result columns come from the cycle (target + a-priori columns selected in experiment)
+            // If not available, fallback to extracting from Predicted_* columns
+            let labCols = labResultColumns;
+            if (!labCols || labCols.length === 0) {
+                labCols = predCols
+                    .filter(c => c.startsWith('Predicted_'))
+                    .map(c => c.replace('Predicted_', ''));
+            }
+
+            // Track all columns for plotting
+            inputCols.forEach(c => allColumns.add(c));
+            predCols.forEach(c => allColumns.add('Pred_' + c));
+            labCols.forEach(c => allColumns.add('Lab_' + c));
+
+            // Update headers
+            const inputHeader = headerRow.querySelector('.input-cols-header');
+            const predHeader = headerRow.querySelector('.pred-cols-header');
+            const labHeader = headerRow.querySelector('.lab-cols-header');
+
+            inputHeader.textContent = inputCols.length > 0 ? 'Inputs' : '';
+            predHeader.textContent = predCols.length > 0 ? 'Predictions' : '';
+            labHeader.textContent = labCols.length > 0 ? 'Lab Results' : '';
+
+            samples.forEach(sample => {
+                const row = renderSampleRow(sample, inputCols, predCols, labCols);
+                tbody.appendChild(row);
+            });
+        }
+
+        function renderSampleRow(sample, inputCols, predCols, labCols) {
+            const template = document.getElementById('sample-row-template');
+            const row = template.content.cloneNode(true).firstElementChild;
+
+            row.dataset.sampleId = sample.id;
+            row.querySelector('.idx-cell').textContent = sample.idx_sample;
+
+            // Status badge
+            const statusCell = row.querySelector('.status-cell');
+            const statusBadge = document.createElement('span');
+            statusBadge.className = `badge status-badge bg-${sample.status === 'completed' ? 'success' : sample.status === 'tested' ? 'warning' : 'secondary'}`;
+            statusBadge.textContent = sample.status;
+            statusCell.appendChild(statusBadge);
+
+            // Input values (readonly)
+            const inputCells = row.querySelector('.input-cells');
+            inputCols.forEach(col => {
+                const val = sample.row_data[col];
+                const span = document.createElement('span');
+                span.className = 'badge bg-light text-dark me-1';
+                span.textContent = typeof val === 'number' ? val.toFixed(2) : val;
+                span.title = col;
+                inputCells.appendChild(span);
+            });
+
+            // Prediction values (readonly) - color-coded by type
+            const predCells = row.querySelector('.pred-cells');
+
+            // First, add original values for target/a-priori columns (from row_data)
+            labCols.forEach(col => {
+                const val = sample.row_data[col];
+                if (val !== undefined && val !== null) {
+                    const span = document.createElement('span');
+                    span.className = 'badge me-1';
+                    span.style.backgroundColor = '#9b59b6';  // Purple for original target/a-priori values
+                    span.style.color = 'white';
+                    span.textContent = typeof val === 'number' ? val.toFixed(2) : val;
+                    span.title = `Original ${col}`;
+                    predCells.appendChild(span);
+                }
+            });
+
+            // Then add model predictions
+            predCols.forEach(col => {
+                const val = sample.predictions[col];
+                const span = document.createElement('span');
+
+                // Color code: purple for target/a-priori predictions, cyan for computed metrics
+                if (col.startsWith('Predicted_')) {
+                    span.className = 'badge me-1';
+                    span.style.backgroundColor = '#9b59b6';  // Purple for target predictions
+                    span.style.color = 'white';
+                    span.title = col;
+                } else if (col === 'Utility') {
+                    span.className = 'badge bg-success text-white me-1';  // Green for Utility
+                    span.title = 'Utility Score';
+                } else if (col === 'Novelty') {
+                    span.className = 'badge bg-warning text-dark me-1';  // Yellow for Novelty
+                    span.title = 'Novelty Score';
+                } else if (col.includes('Uncertainty')) {
+                    span.className = 'badge bg-info text-dark me-1';  // Cyan for Uncertainty
+                    span.title = col;
+                } else {
+                    span.className = 'badge bg-secondary text-white me-1';  // Gray for others
+                    span.title = col;
+                }
+
+                span.textContent = typeof val === 'number' ? val.toFixed(3) : val;
+                predCells.appendChild(span);
+            });
+
+            // Lab result inputs (editable)
+            const labCells = row.querySelector('.lab-cells');
+            labCols.forEach(col => {
+                const val = sample.lab_results ? sample.lab_results[col] : '';
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.step = 'any';
+                input.className = 'form-control form-control-sm lab-input';
+                input.placeholder = col;
+                input.value = val || '';
+                input.dataset.column = col;
+                labCells.appendChild(input);
+            });
+
+            // Save button
+            row.querySelector('.save-btn').addEventListener('click', () => saveSample(sample.id, row));
+
+            // Sync button
+            row.querySelector('.sync-btn').addEventListener('click', () => syncSample(sample.id));
+
+            // Delete button
+            row.querySelector('.delete-btn').addEventListener('click', () => deleteSample(sample.id, row));
+
+            return row;
+        }
+
+        async function saveSample(sampleId, row) {
+            const labInputs = row.querySelectorAll('.lab-input');
+            const labResults = {};
+
+            labInputs.forEach(input => {
+                const val = input.value.trim();
+                if (val !== '') {
+                    labResults[input.dataset.column] = parseFloat(val);
+                }
+            });
+
+            try {
+                const response = await fetch(`/api/results/samples/${sampleId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lab_results: labResults })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Update status badge
+                    const statusBadge = row.querySelector('.status-badge');
+                    statusBadge.className = `badge status-badge bg-${data.sample.status === 'completed' ? 'success' : 'warning'}`;
+                    statusBadge.textContent = data.sample.status;
+
+                    // Flash success
+                    row.classList.add('table-success');
+                    setTimeout(() => row.classList.remove('table-success'), 1000);
+                } else {
+                    alert(data.error || 'Failed to save');
+                }
+            } catch (err) {
+                console.error('Error saving sample:', err);
+                alert('Error saving sample');
+            }
+        }
+
+        async function syncSample(sampleId) {
+            try {
+                const response = await fetch(`/api/results/samples/${sampleId}/sync`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Sample synced to CSV successfully!');
+                    loadProject(currentProjectId); // Refresh
+                } else {
+                    alert(data.error || 'Failed to sync');
+                }
+            } catch (err) {
+                console.error('Error syncing sample:', err);
+                alert('Error syncing sample');
+            }
+        }
+
+        async function deleteSample(sampleId, row) {
+            if (!confirm('Are you sure you want to delete this sample? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/results/samples/${sampleId}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Remove row from UI with animation
+                    row.style.transition = 'opacity 0.3s';
+                    row.style.opacity = '0';
+                    setTimeout(() => {
+                        row.remove();
+                    }, 300);
+                } else {
+                    alert(data.error || 'Failed to delete');
+                }
+            } catch (err) {
+                console.error('Error deleting sample:', err);
+                alert('Error deleting sample');
+            }
+        }
+
+        async function syncAllSamples(cycleId) {
+            // Get all sample IDs for this cycle
+            const cycle = currentProject.cycles.find(c => c.id === cycleId);
+            if (!cycle) return;
+
+            const sampleIds = cycle.samples.map(s => s.id);
+
+            try {
+                const response = await fetch('/api/results/samples/sync-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sample_ids: sampleIds })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Synced ${data.synced_count} samples to CSV!`);
+                    loadProject(currentProjectId); // Refresh
+                } else {
+                    alert(data.error || 'Failed to sync');
+                }
+            } catch (err) {
+                console.error('Error syncing samples:', err);
+                alert('Error syncing samples');
+            }
+        }
+
+        function populatePlotColumns() {
+            const select = document.getElementById('plot-columns');
+            select.innerHTML = '';
+
+            allColumns.forEach(col => {
+                const option = document.createElement('option');
+                option.value = col;
+                option.textContent = col;
+                select.appendChild(option);
+            });
+        }
+
+        async function generatePlot() {
+            const selectedCols = Array.from(document.getElementById('plot-columns').selectedOptions).map(o => o.value);
+            const plotType = document.getElementById('plot-type').value;
+
+            if (selectedCols.length === 0) {
+                alert('Please select at least one column');
+                return;
+            }
+
+            // Collect data from all cycles
+            const traces = [];
+
+            currentProject.cycles.forEach((cycle, idx) => {
+                selectedCols.forEach(col => {
+                    const values = [];
+                    const labels = [];
+
+                    cycle.samples.forEach(sample => {
+                        let val = null;
+
+                        // Check different data sources
+                        if (col.startsWith('Pred_')) {
+                            val = sample.predictions[col.replace('Pred_', '')];
+                        } else if (col.startsWith('Lab_')) {
+                            val = sample.lab_results ? sample.lab_results[col.replace('Lab_', '')] : null;
+                        } else {
+                            val = sample.row_data[col];
+                        }
+
+                        if (val !== null && val !== undefined) {
+                            values.push(val);
+                            labels.push(`C${cycle.cycle_number}-S${sample.idx_sample}`);
+                        }
+                    });
+
+                    if (values.length > 0) {
+                        traces.push({
+                            name: `Cycle ${cycle.cycle_number}: ${col}`,
+                            x: labels,
+                            y: values,
+                            type: plotType === 'bar' ? 'bar' : 'scatter',
+                            mode: plotType === 'scatter' ? 'markers' : 'lines+markers'
+                        });
+                    }
+                });
+            });
+
+            const layout = {
+                title: `Results: ${selectedCols.join(', ')}`,
+                xaxis: { title: 'Sample' },
+                yaxis: { title: 'Value' },
+                height: 400
+            };
+
+            Plotly.newPlot('results-plot', traces, layout);
+        }
+    });
+</script>
+{% endblock %}

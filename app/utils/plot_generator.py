@@ -318,7 +318,7 @@ class PlotGenerator:
             title=title,
             xaxis_title="t-SNE-1", yaxis_title="t-SNE-2",
             plot_bgcolor="lavender", paper_bgcolor="lavender",
-            margin=dict(l=60, r=40, t=60, b=60), height=1000,
+            margin=dict(l=60, r=40, t=60, b=60), height=600,
             xaxis=dict(showgrid=False),
             yaxis=dict(showgrid=False),
             legend=dict(yanchor='top', y=0.99, xanchor='left', x=0.01)
@@ -512,10 +512,23 @@ class PlotGenerator:
     # ======================================================
     #   TRAJECTORY VISUALIZATION (LLM-AL Paper Feature)
     # ======================================================
+    
+    # Mode colors for consistent visualization
+    MODE_COLORS = {
+        'ML_MODE': {'primary': '#0077B6', 'secondary': '#00B4D8', 'name': 'ML Only'},
+        'LLM_AGENT_MODE': {'primary': '#6F42C1', 'secondary': '#9775FA', 'name': 'LLM Agent'},
+        'HYBRID_MODE': {'primary': '#198754', 'secondary': '#40C057', 'name': 'Hybrid'},
+    }
+    
     @classmethod
     def create_trajectory_plot(cls, df: pd.DataFrame, trajectory_data: dict, input_columns):
         """
-        Visualize exploration trajectory overlaid on TSNE space.
+        Visualize exploration trajectory overlaid on TSNE space with COLOR-CODED MODES.
+        
+        Each mode (ML, LLM, Hybrid) is shown in a different color:
+        - ML Only: Blue (#0077B6)
+        - LLM Agent: Purple (#6F42C1)
+        - Hybrid: Green (#198754)
         
         Shows the path the active learning agent takes through the feature space,
         as described in the LLM-AL paper.
@@ -545,81 +558,138 @@ class PlotGenerator:
             hoverinfo='skip'
         ))
         
-        # Get trajectory point coordinates
-        # Match trajectory points to TSNE coordinates
-        traj_x, traj_y, traj_labels = [], [], []
+        # Group trajectory points by mode for color-coding
+        mode_trajectories = {}
+        for point in trajectory:
+            mode = point.get('mode', 'ML_MODE')
+            if mode not in mode_trajectories:
+                mode_trajectories[mode] = []
+            
+            row_idx = point.get('row_index')
+            if row_idx is not None and row_idx in df.index:
+                mode_trajectories[mode].append({
+                    'x': float(df.loc[row_idx, 'tsne-2d-one']),
+                    'y': float(df.loc[row_idx, 'tsne-2d-two']),
+                    'iteration': point['iteration'],
+                    'mode': mode,
+                    'utility': point.get('utility', 0)
+                })
         
+        # Draw the full path (all points in order) with connecting lines
+        all_traj_x, all_traj_y = [], []
         for point in trajectory:
             row_idx = point.get('row_index')
             if row_idx is not None and row_idx in df.index:
-                traj_x.append(float(df.loc[row_idx, 'tsne-2d-one']))
-                traj_y.append(float(df.loc[row_idx, 'tsne-2d-two']))
-                traj_labels.append(f"Iter {point['iteration']} ({point['mode']})")
+                all_traj_x.append(float(df.loc[row_idx, 'tsne-2d-one']))
+                all_traj_y.append(float(df.loc[row_idx, 'tsne-2d-two']))
         
-        if len(traj_x) >= 2:
-            # Draw trajectory path (lines)
+        if len(all_traj_x) >= 2:
+            # Draw connecting path (thin gray line)
             fig.add_trace(go.Scatter(
-                x=traj_x, y=traj_y,
+                x=all_traj_x, y=all_traj_y,
                 mode='lines',
-                name='Trajectory Path',
-                line=dict(color='#0077B6', width=2, dash='solid'),
-                hoverinfo='skip'
+                name='Full Path',
+                line=dict(color='#888888', width=1, dash='dot'),
+                hoverinfo='skip',
+                showlegend=False
             ))
         
-        if len(traj_x) >= 1:
-            # Draw trajectory points with gradient colors
-            colors = list(range(len(traj_x)))
+        # Draw mode-specific points with their colors
+        for mode, points in mode_trajectories.items():
+            if not points:
+                continue
+                
+            mode_info = cls.MODE_COLORS.get(mode, {'primary': '#888888', 'secondary': '#AAAAAA', 'name': mode})
+            color = mode_info['primary']
+            name = mode_info['name']
+            
+            xs = [p['x'] for p in points]
+            ys = [p['y'] for p in points]
+            iterations = [p['iteration'] for p in points]
+            utilities = [p['utility'] for p in points]
+            
+            # Draw trajectory lines for this mode (segments only between consecutive same-mode points)
+            if len(xs) >= 2:
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys,
+                    mode='lines',
+                    name=f'{name} Path',
+                    line=dict(color=color, width=2),
+                    hoverinfo='skip',
+                    showlegend=False
+                ))
+            
+            # Draw points with mode color
+            hover_text = [f"Iter {i}<br>{name}<br>Utility: {u:.3f}" 
+                         for i, u in zip(iterations, utilities)]
             
             fig.add_trace(go.Scatter(
-                x=traj_x, y=traj_y,
+                x=xs, y=ys,
                 mode='markers+text',
-                name='Selected Points',
+                name=f'{name} ({len(points)} pts)',
                 marker=dict(
-                    size=15,
-                    color=colors,
-                    colorscale='Blues',
-                    showscale=True,
-                    colorbar=dict(title="Iteration"),
-                    line=dict(color='#023E8A', width=2)
+                    size=14,
+                    color=color,
+                    line=dict(color='white', width=2),
+                    opacity=0.9
                 ),
-                text=[str(i+1) for i in range(len(traj_x))],
+                text=[str(i) for i in iterations],
                 textposition='top center',
-                textfont=dict(size=10, color='#023E8A'),
-                customdata=traj_labels,
-                hovertemplate="%{customdata}<br>t-SNE-1: %{x:.2f}<br>t-SNE-2: %{y:.2f}<extra></extra>"
+                textfont=dict(size=9, color=color),
+                hovertext=hover_text,
+                hoverinfo='text'
             ))
         
-        # Highlight start and end
-        if len(traj_x) >= 1:
+        # Highlight start and current end points
+        if len(all_traj_x) >= 1:
+            first_point = trajectory[0]
+            first_mode = first_point.get('mode', 'ML_MODE')
+            first_color = cls.MODE_COLORS.get(first_mode, {}).get('primary', '#2ECC71')
+            
             fig.add_trace(go.Scatter(
-                x=[traj_x[0]], y=[traj_y[0]],
+                x=[all_traj_x[0]], y=[all_traj_y[0]],
                 mode='markers',
                 name='Start',
-                marker=dict(size=20, color='#2ECC71', symbol='circle',
-                           line=dict(color='#1E8449', width=2))
+                marker=dict(size=22, color=first_color, symbol='circle',
+                           line=dict(color='white', width=3)),
+                hoverinfo='name'
             ))
         
-        if len(traj_x) >= 2:
+        if len(all_traj_x) >= 2:
+            last_point = trajectory[-1]
+            last_mode = last_point.get('mode', 'ML_MODE')
+            last_color = cls.MODE_COLORS.get(last_mode, {}).get('primary', '#E74C3C')
+            
             fig.add_trace(go.Scatter(
-                x=[traj_x[-1]], y=[traj_y[-1]],
+                x=[all_traj_x[-1]], y=[all_traj_y[-1]],
                 mode='markers',
                 name='Current',
-                marker=dict(size=20, color='#E74C3C', symbol='star',
-                           line=dict(color='#922B21', width=2))
+                marker=dict(size=22, color=last_color, symbol='star',
+                           line=dict(color='white', width=3)),
+                hoverinfo='name'
             ))
         
+        # Summary info
         total_distance = trajectory_data.get('total_distance', 0)
+        modes_used = list(mode_trajectories.keys())
+        mode_summary = ' | '.join([f"{cls.MODE_COLORS.get(m, {}).get('name', m)}: {len(mode_trajectories[m])}" 
+                                   for m in modes_used])
         
         fig.update_layout(
-            title=f"Exploration Trajectory (Cumulative Distance: {total_distance:.2f})",
+            title=f"Trajectory by Mode ({mode_summary})<br><sub>Total Distance: {total_distance:.2f}</sub>",
             xaxis_title="t-SNE-1",
             yaxis_title="t-SNE-2",
             plot_bgcolor="#f7f7f7",
             paper_bgcolor="#f7f7f7",
-            margin=dict(l=60, r=40, t=60, b=60),
+            margin=dict(l=60, r=40, t=80, b=60),
             xaxis=dict(showgrid=True, gridcolor="#cccccc"),
             yaxis=dict(showgrid=True, gridcolor="#cccccc"),
-            legend=dict(yanchor='top', y=0.99, xanchor='left', x=0.01)
+            legend=dict(
+                yanchor='top', y=0.99, xanchor='left', x=0.01,
+                bgcolor='rgba(255,255,255,0.9)',
+                bordercolor='#CCCCCC',
+                borderwidth=1
+            )
         )
         
         return fig.to_dict()
@@ -627,7 +697,7 @@ class PlotGenerator:
     @classmethod
     def create_distance_plot(cls, trajectory_data: dict):
         """
-        Plot cumulative distance traveled over iterations.
+        Plot cumulative distance traveled over iterations with COLOR-CODED modes.
         
         Implements visualization from LLM-AL paper showing how different
         algorithms navigate the search space.
@@ -641,26 +711,60 @@ class PlotGenerator:
         iterations = [p['iteration'] for p in trajectory]
         modes = [p['mode'] for p in trajectory]
         
-        # Create hover text
-        hover_text = [f"Iter {i}: {m}<br>Distance: {d:.3f}" 
-                     for i, m, d in zip(iterations, modes, distances)]
+        # Map modes to colors
+        marker_colors = []
+        for mode in modes:
+            mode_info = cls.MODE_COLORS.get(mode, {'primary': '#888888'})
+            marker_colors.append(mode_info['primary'])
+        
+        # Create hover text with mode names
+        hover_text = []
+        for i, m, d in zip(iterations, modes, distances):
+            mode_name = cls.MODE_COLORS.get(m, {}).get('name', m)
+            hover_text.append(f"Iter {i}: {mode_name}<br>Distance: {d:.3f}")
         
         fig = go.Figure()
         
-        # Main line
+        # Line connecting all points (gray)
         fig.add_trace(go.Scatter(
             x=iterations,
             y=distances,
-            mode='lines+markers',
-            name='Cumulative Distance',
-            line=dict(color='#0077B6', width=3),
-            marker=dict(size=10, color='#0077B6'),
+            mode='lines',
+            name='Path',
+            line=dict(color='#AAAAAA', width=2),
+            hoverinfo='skip',
+            showlegend=False
+        ))
+        
+        # Points colored by mode
+        fig.add_trace(go.Scatter(
+            x=iterations,
+            y=distances,
+            mode='markers',
+            name='Iterations',
+            marker=dict(
+                size=12,
+                color=marker_colors,
+                line=dict(color='white', width=2)
+            ),
             text=hover_text,
             hoverinfo='text'
         ))
         
+        # Add legend entries for each mode used
+        modes_used = list(set(modes))
+        for mode in modes_used:
+            mode_info = cls.MODE_COLORS.get(mode, {'primary': '#888888', 'name': mode})
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None],
+                mode='markers',
+                name=mode_info['name'],
+                marker=dict(size=10, color=mode_info['primary']),
+                showlegend=True
+            ))
+        
         fig.update_layout(
-            title="Cumulative Distance in Feature Space",
+            title="Cumulative Distance by Mode",
             xaxis_title="Iteration",
             yaxis_title="Cumulative Distance (Standardized)",
             plot_bgcolor="#f7f7f7",
@@ -668,6 +772,163 @@ class PlotGenerator:
             margin=dict(l=60, r=40, t=60, b=60),
             xaxis=dict(showgrid=True, gridcolor="#cccccc", dtick=1),
             yaxis=dict(showgrid=True, gridcolor="#cccccc"),
+            legend=dict(
+                yanchor='bottom', y=0.01, xanchor='right', x=0.99,
+                bgcolor='rgba(255,255,255,0.9)'
+            )
+        )
+        
+        return fig.to_dict()
+
+    @classmethod
+    def create_feature_importance_plot(cls, feature_importances: dict, input_columns: list):
+        """
+        Create a horizontal bar chart showing feature importance.
+        
+        Args:
+            feature_importances: Dict mapping feature names to importance scores
+            input_columns: List of input column names
+        
+        Returns:
+            Plotly figure as dict
+        """
+        # Sort by importance
+        sorted_features = sorted(feature_importances.items(), key=lambda x: abs(x[1]), reverse=True)
+        features = [f[0] for f in sorted_features]
+        importances = [f[1] for f in sorted_features]
+        
+        # Create color scale (positive = green, negative = red)
+        colors = ['#198754' if imp >= 0 else '#dc3545' for imp in importances]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Bar(
+            y=features,
+            x=importances,
+            orientation='h',
+            marker=dict(
+                color=colors,
+                opacity=0.8
+            ),
+            text=[f'{imp:.3f}' for imp in importances],
+            textposition='outside',
+            hovertemplate='<b>%{y}</b><br>Importance: %{x:.4f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title=dict(
+                text='Feature Importance',
+                x=0.5,
+                font=dict(size=16)
+            ),
+            xaxis_title='Importance Score',
+            yaxis_title='Feature',
+            template='plotly_white',
+            height=max(400, len(features) * 25),  # Dynamic height based on features
+            margin=dict(l=150, r=50, t=50, b=50),
+            yaxis=dict(
+                autorange='reversed'  # Most important at top
+            )
+        )
+        
+        return fig.to_dict()
+    
+    @classmethod
+    def create_prediction_actual_plot(cls, df: pd.DataFrame, target_columns: list):
+        """
+        Create scatter plot of predicted vs actual values with perfect prediction line.
+        
+        Shows how well the model predictions match actual values for labeled samples.
+        
+        Args:
+            df: DataFrame with labeled samples (must have both actual and predicted values)
+            target_columns: List of target column names
+        
+        Returns:
+            Plotly figure as dict
+        """
+        fig = go.Figure()
+        
+        colors = ['#0077B6', '#198754', '#FF6B35', '#6F42C1']
+        
+        for i, target_col in enumerate(target_columns):
+            pred_col = f'Predicted_{target_col}'
+            
+            # Filter for samples with both actual and predicted values
+            if pred_col in df.columns:
+                valid_mask = df[target_col].notna() & df[pred_col].notna()
+                actual = df.loc[valid_mask, target_col].values.tolist()  # Convert to list for JSON
+                predicted = df.loc[valid_mask, pred_col].values.tolist()  # Convert to list for JSON
+                
+                if len(actual) > 0:
+                    # Scatter points
+                    fig.add_trace(go.Scatter(
+                        x=actual,
+                        y=predicted,
+                        mode='markers',
+                        name=target_col,
+                        marker=dict(
+                            color=colors[i % len(colors)],
+                            size=10,
+                            opacity=0.7,
+                            line=dict(width=1, color='white')
+                        ),
+                        hovertemplate=f'<b>{target_col}</b><br>Actual: %{{x:.2f}}<br>Predicted: %{{y:.2f}}<extra></extra>'
+                    ))
+                    
+                    # Calculate R² score
+                    if len(actual) > 1:
+                        actual_arr = np.array(actual)
+                        predicted_arr = np.array(predicted)
+                        ss_res = ((actual_arr - predicted_arr) ** 2).sum()
+                        ss_tot = ((actual_arr - actual_arr.mean()) ** 2).sum()
+                        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+                        
+                        # Add annotation with R²
+                        fig.add_annotation(
+                            x=0.02, y=0.98 - i * 0.08,
+                            xref='paper', yref='paper',
+                            text=f'{target_col}: R² = {r2:.3f}',
+                            showarrow=False,
+                            font=dict(size=12, color=colors[i % len(colors)]),
+                            bgcolor='white',
+                            bordercolor=colors[i % len(colors)],
+                            borderwidth=1
+                        )
+        
+        # Add perfect prediction line (y = x)
+        if len(fig.data) > 0:
+            all_values = []
+            for trace in fig.data:
+                all_values.extend(trace.x)
+                all_values.extend(trace.y)
+            min_val = min(all_values)
+            max_val = max(all_values)
+            
+            fig.add_trace(go.Scatter(
+                x=[min_val, max_val],
+                y=[min_val, max_val],
+                mode='lines',
+                name='Perfect Prediction',
+                line=dict(color='#888', dash='dash', width=2),
+                hoverinfo='skip'
+            ))
+        
+        fig.update_layout(
+            title=dict(
+                text='Prediction vs Actual',
+                x=0.5,
+                font=dict(size=16)
+            ),
+            xaxis_title='Actual Value',
+            yaxis_title='Predicted Value',
+            template='plotly_white',
+            height=500,
+            margin=dict(l=50, r=50, t=80, b=50),
+            legend=dict(
+                yanchor='bottom', y=0.01, xanchor='right', x=0.99,
+                bgcolor='rgba(255,255,255,0.9)'
+            )
         )
         
         return fig.to_dict()

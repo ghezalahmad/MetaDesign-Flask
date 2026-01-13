@@ -93,6 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let experimentData = null;
     let resultsDataTable = null;
     let shapashData = null; // Store explainability data
+    let lastExperimentConfig = null; // Store last experiment config for Excel export
 
     // ----- MODEL DESCRIPTIONS (Keep as is) -----
     const MODEL_INFO = {
@@ -120,6 +121,11 @@ document.addEventListener("DOMContentLoaded", () => {
             name: 'Gaussian Process (GP)',
             description: 'Non-parametric model that provides accurate **uncertainty estimates (error bars)**, which are critical for effective exploration. Works best with **smaller, high-quality datasets**.',
             warning: 'Scalability is a major limitation; computation time increases **cubically** with data points. Not suitable for datasets exceeding a few thousand entries.'
+        },
+        'rl': {
+            name: 'Reinforcement Learning (RL)',
+            description: 'Uses **PPO (Proximal Policy Optimization)** to learn optimal sample selection strategies. Combines prediction accuracy improvement AND discovery of high-performing materials. **Improves with each cycle** as it learns from session history.',
+            warning: 'Best suited for **iterative active learning campaigns**. Initial selections may be less optimal, but performance improves as the agent learns from feedback.'
         },
         'maml': {
             name: 'Model-Agnostic Meta-Learning (MAML)',
@@ -493,6 +499,68 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Load settings on page init
     loadSettings();
+
+    // Check for design space file in URL parameter
+    checkForDesignSpaceParam();
+
+    function checkForDesignSpaceParam() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const dsFilename = urlParams.get('ds');
+
+        if (!dsFilename) return;
+
+        console.log(`📊 Loading design space from URL: ${dsFilename}`);
+
+        // Fetch the design space file info from the server
+        fetch(`/api/design-space-info?filename=${encodeURIComponent(dsFilename)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) {
+                    console.warn('⚠️ Could not load design space:', data.error);
+                    return;
+                }
+
+                // Check if already loaded
+                const existingDataset = uploadedDatasets.find(d => d.filename === dsFilename);
+                if (existingDataset) {
+                    const index = uploadedDatasets.indexOf(existingDataset);
+                    handleDatasetSelection(index);
+                    console.log(`✅ Design space '${dsFilename}' already loaded, selected.`);
+                    return;
+                }
+
+                // Add as new dataset
+                const newDataset = {
+                    filename: dsFilename,
+                    columns: data.columns,
+                    isActive: true,
+                    isDesignSpace: true
+                };
+                uploadedDatasets.push(newDataset);
+
+                const newIndex = uploadedDatasets.length - 1;
+                addDatasetRow(newDataset, newIndex);
+                handleDatasetSelection(newIndex);
+
+                console.log(`✅ Design space '${dsFilename}' loaded with ${data.columns.length} columns`);
+
+                // Show a brief success message
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                alertDiv.innerHTML = `
+                    <strong>Design Space Loaded!</strong> ${dsFilename} with ${data.columns.length} columns.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.querySelector('.container-fluid')?.prepend(alertDiv);
+
+                // Auto-dismiss after 5 seconds
+                setTimeout(() => alertDiv.remove(), 5000);
+            })
+            .catch(err => {
+                console.error('❌ Error loading design space:', err);
+            });
+    }
+
     //  DATASET MANAGEMENT (Keep as is)
     // ==========================================================
 
@@ -532,10 +600,21 @@ document.addEventListener("DOMContentLoaded", () => {
         tr.dataset.index = index;
 
         tr.innerHTML = `
-            <td><button class="btn btn-sm btn-danger delete-btn">Delete</button></td>
+            <td>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-success select-btn" title="Select this dataset">
+                        <i class="bi bi-check-circle"></i>
+                    </button>
+                    <a href="/data/${dataset.filename}" download class="btn btn-outline-primary download-btn" title="Download dataset">
+                        <i class="bi bi-download"></i>
+                    </a>
+                    <button class="btn btn-outline-danger delete-btn" title="Delete dataset">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </td>
             <td>${dataset.filename}</td>
-            <td>${dataset.columns.join(", ")}</td>
-            <td><button class="btn btn-sm btn-primary select-btn">Select</button></td>
+            <td class="text-truncate" style="max-width: 400px;">${dataset.columns.join(", ")}</td>
         `;
 
         datasetTableBody.appendChild(tr);
@@ -573,18 +652,20 @@ document.addEventListener("DOMContentLoaded", () => {
             if (isActive) {
                 row.classList.add('table-success', 'fw-bold');
                 if (selectBtn) {
-                    selectBtn.textContent = 'Selected';
-                    selectBtn.classList.remove('btn-primary');
-                    selectBtn.classList.add('btn-secondary');
+                    selectBtn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+                    selectBtn.classList.remove('btn-outline-success');
+                    selectBtn.classList.add('btn-success');
                     selectBtn.disabled = true;
+                    selectBtn.title = 'Currently selected';
                 }
             } else {
                 row.classList.remove('table-success', 'fw-bold');
                 if (selectBtn) {
-                    selectBtn.textContent = 'Select';
-                    selectBtn.classList.remove('btn-secondary');
-                    selectBtn.classList.add('btn-primary');
+                    selectBtn.innerHTML = '<i class="bi bi-check-circle"></i>';
+                    selectBtn.classList.remove('btn-success');
+                    selectBtn.classList.add('btn-outline-success');
                     selectBtn.disabled = false;
+                    selectBtn.title = 'Select this dataset';
                 }
             }
         }
@@ -824,6 +905,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const w_llm = parseFloat(document.getElementById('w_llm')?.value || 0.5);
         const w_ml = parseFloat(document.getElementById('w_ml')?.value || 0.5);
+        const acquisitionFunc = document.getElementById('acquisition-select')?.value || 'webslamd';
 
         const payload = {
             model: modelSelect.value,
@@ -832,9 +914,17 @@ document.addEventListener("DOMContentLoaded", () => {
             input_columns: selectedInputs,
             target_columns: targets,
             apriori_columns: apriori,
+            acquisition_function: acquisitionFunc,
             active_learning_mode: mode,
             prompt_style: promptStyle,
             hybrid_weights: { w_llm, w_ml }
+        };
+
+        // Store config for Excel export with metadata
+        lastExperimentConfig = {
+            ...payload,
+            timestamp: new Date().toISOString(),
+            dataset_filename: activeDataset.filename
         };
 
         console.log("🚀 Sending experiment request:", payload);
@@ -1013,6 +1103,16 @@ document.addEventListener("DOMContentLoaded", () => {
                                     }
 
                                     console.log("✅ All plots rendered!");
+
+                                    // Store new analysis plots for radio button handlers
+                                    if (experimentData) {
+                                        experimentData.feature_importance_plot = data.feature_importance_plot;
+                                        experimentData.prediction_actual_plot = data.prediction_actual_plot;
+                                    }
+
+                                    // Setup event handlers for Model Analysis radio buttons
+                                    setupModelAnalysisRadios(data);
+
                                 }, 200);
                             }, 300);
                         }, 200);
@@ -1020,6 +1120,35 @@ document.addEventListener("DOMContentLoaded", () => {
                 }, 200);
             }, 150);
         }, 100);
+    }
+
+    // Setup Model Analysis radio button event handlers
+    function setupModelAnalysisRadios(data) {
+        const featureImportanceRadio = document.getElementById('feature-importance-radio');
+        const predictionActualRadio = document.getElementById('prediction-actual-radio');
+        const plotContainer = document.getElementById('additional-plot-container');
+
+        if (featureImportanceRadio) {
+            featureImportanceRadio.addEventListener('change', function () {
+                if (this.checked && data.feature_importance_plot) {
+                    plotContainer.innerHTML = '<div id="feature-importance-plot" style="width:100%;height:400px;"></div>';
+                    setTimeout(() => {
+                        Plotly.newPlot('feature-importance-plot', data.feature_importance_plot.data, data.feature_importance_plot.layout, { responsive: true });
+                    }, 100);
+                }
+            });
+        }
+
+        if (predictionActualRadio) {
+            predictionActualRadio.addEventListener('change', function () {
+                if (this.checked && data.prediction_actual_plot) {
+                    plotContainer.innerHTML = '<div id="prediction-actual-plot" style="width:100%;height:500px;"></div>';
+                    setTimeout(() => {
+                        Plotly.newPlot('prediction-actual-plot', data.prediction_actual_plot.data, data.prediction_actual_plot.layout, { responsive: true });
+                    }, 100);
+                }
+            });
+        }
     }
 
     // RENDER TABLE SEPARATELY
@@ -1037,6 +1166,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 newTable.classList.add('table', 'table-striped', 'w-100');
             }
 
+            // Add a header row for column filters
+            const thead = newTable.querySelector('thead');
+            if (thead) {
+                const filterRow = document.createElement('tr');
+                filterRow.id = 'filter-row';
+                filterRow.classList.add('bg-light');
+                const headerCells = thead.querySelectorAll('th');
+                headerCells.forEach(() => {
+                    filterRow.appendChild(document.createElement('th'));
+                });
+                thead.appendChild(filterRow);
+            }
+
             resultsDataTable = new DataTable(newTable, {
                 paging: true,
                 searching: true,
@@ -1046,6 +1188,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 responsive: true,
                 deferRender: true,  // Performance optimization
                 dom: 'lfrtipB',
+                orderCellsTop: true,  // Keep sorting on first header row
                 buttons: [
                     {
                         extend: 'csv',
@@ -1053,15 +1196,607 @@ document.addEventListener("DOMContentLoaded", () => {
                         className: 'btn-sm btn-primary ms-2'
                     },
                     {
-                        extend: 'excel',
-                        text: '<i class="bi bi-file-earmark-excel"></i> Download Excel',
-                        className: 'btn-sm btn-success ms-2'
+                        text: '<i class="bi bi-file-earmark-excel"></i> Download Excel (with Metadata)',
+                        className: 'btn-sm btn-success ms-2',
+                        action: function (e, dt, node, config) {
+                            exportExcelWithMetadata(dt);
+                        }
                     }
-                ]
+                ],
+                initComplete: function () {
+                    // Add column filters like Excel
+                    const api = this.api();
+                    const filterRowCells = document.querySelectorAll('#filter-row th');
+
+                    api.columns().every(function (colIdx) {
+                        const column = this;
+                        const header = column.header().textContent.trim();
+                        const filterCell = filterRowCells[colIdx];
+
+                        if (!filterCell) return;
+
+                        // Check if column has numeric data
+                        let isNumeric = true;
+                        column.data().each(function (d) {
+                            if (d !== null && d !== '' && isNaN(parseFloat(d))) {
+                                isNumeric = false;
+                            }
+                        });
+
+                        // For columns with few unique values, use dropdown
+                        const uniqueValues = [...new Set(column.data().toArray())].filter(v => v !== null && v !== '');
+
+                        if (uniqueValues.length <= 10 && uniqueValues.length > 0) {
+                            // Dropdown filter for categorical/boolean columns
+                            const select = document.createElement('select');
+                            select.classList.add('form-select', 'form-select-sm');
+                            select.style.minWidth = '80px';
+                            select.innerHTML = '<option value="">All</option>';
+
+                            uniqueValues.sort().forEach(function (val) {
+                                const displayVal = String(val).length > 15 ? String(val).substring(0, 12) + '...' : val;
+                                select.innerHTML += `<option value="${val}">${displayVal}</option>`;
+                            });
+
+                            select.addEventListener('change', function () {
+                                const val = this.value;
+                                column.search(val ? '^' + escapeRegex(val) + '$' : '', true, false).draw();
+                            });
+
+                            filterCell.appendChild(select);
+                        } else if (isNumeric && uniqueValues.length > 0) {
+                            // Range inputs for numeric columns
+                            const container = document.createElement('div');
+                            container.classList.add('d-flex', 'gap-1');
+                            container.innerHTML = `
+                                <input type="number" class="form-control form-control-sm filter-min" placeholder="Min" style="width:60px;">
+                                <input type="number" class="form-control form-control-sm filter-max" placeholder="Max" style="width:60px;">
+                            `;
+
+                            const minInput = container.querySelector('.filter-min');
+                            const maxInput = container.querySelector('.filter-max');
+
+                            const filterNumeric = function () {
+                                const min = parseFloat(minInput.value) || -Infinity;
+                                const max = parseFloat(maxInput.value) || Infinity;
+
+                                // Custom filter function
+                                $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                                    const val = parseFloat(data[colIdx]) || 0;
+                                    return val >= min && val <= max;
+                                });
+
+                                api.draw();
+
+                                // Remove filter after draw to avoid accumulation
+                                $.fn.dataTable.ext.search.pop();
+                            };
+
+                            minInput.addEventListener('change', filterNumeric);
+                            maxInput.addEventListener('change', filterNumeric);
+
+                            filterCell.appendChild(container);
+                        } else {
+                            // Text search for other columns
+                            const input = document.createElement('input');
+                            input.type = 'text';
+                            input.classList.add('form-control', 'form-control-sm');
+                            input.placeholder = 'Search...';
+                            input.style.minWidth = '70px';
+
+                            input.addEventListener('keyup', function () {
+                                if (column.search() !== this.value) {
+                                    column.search(this.value).draw();
+                                }
+                            });
+
+                            filterCell.appendChild(input);
+                        }
+                    });
+                }
             });
-            console.log("✅ DataTable initialized");
+            console.log("✅ DataTable initialized with column filters");
         }
     }
+
+    // Helper function to escape regex special characters
+    function escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // =========================================================
+    //  EXCEL EXPORT WITH EXPERIMENT METADATA
+    // =========================================================
+    function exportExcelWithMetadata(dt) {
+        // Check if XLSX library is available
+        if (typeof XLSX === 'undefined') {
+            // Fallback to regular export if XLSX not loaded
+            console.warn("XLSX library not loaded, using basic export");
+            dt.button('.buttons-csv').trigger();
+            return;
+        }
+
+        try {
+            // Create new workbook
+            const wb = XLSX.utils.book_new();
+
+            // === Sheet 1: Results ===
+            // Get table data from DataTable
+            const headers = [];
+            dt.columns().header().each(function (th) {
+                headers.push(th.textContent.trim());
+            });
+
+            const tableData = [headers];
+            dt.rows().data().each(function (row) {
+                tableData.push(Array.from(row));
+            });
+
+            const wsResults = XLSX.utils.aoa_to_sheet(tableData);
+            XLSX.utils.book_append_sheet(wb, wsResults, "Results");
+
+            // === Sheet 2: Experiment Info ===
+            const configData = [
+                ["Experiment Configuration", ""],
+                ["", ""],
+                ["Timestamp", lastExperimentConfig?.timestamp || new Date().toISOString()],
+                ["Dataset", lastExperimentConfig?.dataset_filename || "Unknown"],
+                ["", ""],
+                ["Model Settings", ""],
+                ["Model", lastExperimentConfig?.model || "Unknown"],
+                ["Acquisition Function", lastExperimentConfig?.acquisition_function || "webslamd"],
+                ["Curiosity", lastExperimentConfig?.curiosity || 0],
+                ["Active Learning Mode", lastExperimentConfig?.active_learning_mode || "ML_MODE"],
+                ["", ""],
+                ["Target Properties", ""],
+            ];
+
+            // Add target properties
+            if (lastExperimentConfig?.target_columns) {
+                lastExperimentConfig.target_columns.forEach((target, idx) => {
+                    configData.push([
+                        `Target ${idx + 1}: ${target.name}`,
+                        `Weight: ${target.weight}, Optimization: ${target.optimization}`
+                    ]);
+                });
+            }
+
+            // Add a-priori properties if any
+            if (lastExperimentConfig?.apriori_columns && lastExperimentConfig.apriori_columns.length > 0) {
+                configData.push(["", ""]);
+                configData.push(["A-Priori Properties", ""]);
+                lastExperimentConfig.apriori_columns.forEach((apriori, idx) => {
+                    configData.push([
+                        `A-Priori ${idx + 1}: ${apriori.name}`,
+                        `Weight: ${apriori.weight}, Optimization: ${apriori.optimization}`
+                    ]);
+                });
+            }
+
+            // Add input columns
+            if (lastExperimentConfig?.input_columns) {
+                configData.push(["", ""]);
+                configData.push(["Input Features", lastExperimentConfig.input_columns.join(", ")]);
+            }
+
+            const wsConfig = XLSX.utils.aoa_to_sheet(configData);
+            // Set column widths
+            wsConfig['!cols'] = [{ wch: 30 }, { wch: 50 }];
+            XLSX.utils.book_append_sheet(wb, wsConfig, "Experiment Info");
+
+            // Generate filename with timestamp
+            const now = new Date();
+            const timestamp = now.toISOString().slice(0, 19).replace(/[:-]/g, '');
+            const filename = `experiment_results_${timestamp}.xlsx`;
+
+            // Download
+            XLSX.writeFile(wb, filename);
+            console.log("✅ Excel exported with metadata:", filename);
+
+        } catch (error) {
+            console.error("Excel export error:", error);
+            alert("Excel export failed. Please try CSV export instead.");
+        }
+    }
+
+    // =========================================================
+    //  EXPERIMENT HISTORY FUNCTIONS (Enhanced)
+    // =========================================================
+
+    // Store all experiments for filtering
+    let allExperiments = [];
+    let selectedExperimentIds = new Set();
+
+    async function loadExperimentHistory() {
+        try {
+            const response = await fetch('/api/experiments');
+            const data = await response.json();
+
+            const tbody = document.getElementById('experiment-history-body');
+            if (!tbody) return;
+
+            if (!data.success || !data.experiments || data.experiments.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-muted text-center py-4">No experiments logged yet. Run an experiment to start tracking.</td></tr>';
+                updateExperimentCounts(0, 0);
+                allExperiments = [];
+                return;
+            }
+
+            allExperiments = data.experiments;
+            applyFiltersAndRender();
+
+            console.log(`✅ Loaded ${data.experiments.length} experiments`);
+
+        } catch (error) {
+            console.error("Error loading experiment history:", error);
+        }
+    }
+
+    function applyFiltersAndRender() {
+        const filterModel = document.getElementById('filter-model')?.value || '';
+        const filterStatus = document.getElementById('filter-status')?.value || '';
+        const filterAcquisition = document.getElementById('filter-acquisition')?.value || '';
+
+        let filtered = allExperiments;
+
+        if (filterModel) {
+            filtered = filtered.filter(exp => {
+                const model = exp.metrics?.model || exp.name?.split('_')[0] || '';
+                return model.toLowerCase().includes(filterModel.toLowerCase());
+            });
+        }
+
+        if (filterStatus) {
+            filtered = filtered.filter(exp => exp.status === filterStatus);
+        }
+
+        if (filterAcquisition) {
+            filtered = filtered.filter(exp => {
+                const acq = exp.metrics?.acquisition || exp.config?.acquisition || 'webslamd';
+                return acq.toLowerCase().includes(filterAcquisition.toLowerCase());
+            });
+        }
+
+        renderExperimentTable(filtered);
+        updateExperimentCounts(filtered.length, selectedExperimentIds.size);
+    }
+
+    function renderExperimentTable(experiments) {
+        const tbody = document.getElementById('experiment-history-body');
+        if (!tbody) return;
+
+        if (experiments.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-muted text-center py-4">No experiments match the current filters.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = experiments.map(exp => {
+            const timestamp = formatTimestamp(exp.start_time);
+            const model = exp.metrics?.model || exp.name?.split('_')[0] || 'Unknown';
+            const acquisition = exp.metrics?.acquisition || exp.config?.acquisition || 'webslamd';
+            const utilityMax = exp.metrics?.utility_max ? exp.metrics.utility_max.toFixed(2) : '-';
+            const isChecked = selectedExperimentIds.has(exp.id) ? 'checked' : '';
+
+            const statusBadge = exp.status === 'completed'
+                ? '<span class="badge bg-success">✓</span>'
+                : exp.status === 'failed'
+                    ? '<span class="badge bg-danger">✗</span>'
+                    : '<span class="badge bg-warning">⏳</span>';
+
+            // Generate mini sparkline SVG
+            const sparkline = generateSparkline(exp.metrics?.utility_history || []);
+
+            return `
+                <tr data-exp-id="${exp.id}">
+                    <td>
+                        <input type="checkbox" class="form-check-input exp-checkbox" 
+                               data-exp-id="${exp.id}" ${isChecked}
+                               onchange="toggleExperimentSelection('${exp.id}', this.checked)">
+                    </td>
+                    <td><small>${timestamp}</small></td>
+                    <td><strong>${model}</strong></td>
+                    <td><small>${acquisition}</small></td>
+                    <td>${statusBadge}</td>
+                    <td><strong>${utilityMax}</strong></td>
+                    <td>${sparkline}</td>
+                    <td>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-info btn-sm" onclick="showExperimentDetail('${exp.id}')" title="View Details">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="deleteExperiment('${exp.id}')" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function generateSparkline(history) {
+        if (!history || history.length < 2) {
+            return '<span class="text-muted">-</span>';
+        }
+
+        // Normalize values to 0-20 range for SVG
+        const min = Math.min(...history);
+        const max = Math.max(...history);
+        const range = max - min || 1;
+
+        const width = 60;
+        const height = 20;
+        const points = history.map((val, i) => {
+            const x = (i / (history.length - 1)) * width;
+            const y = height - ((val - min) / range) * height;
+            return `${x},${y}`;
+        }).join(' ');
+
+        const trend = history[history.length - 1] > history[0] ? '#198754' : '#dc3545';
+
+        return `<svg width="${width}" height="${height}" style="vertical-align: middle;">
+            <polyline points="${points}" fill="none" stroke="${trend}" stroke-width="1.5"/>
+            <circle cx="${width}" cy="${height - ((history[history.length - 1] - min) / range) * height}" r="2" fill="${trend}"/>
+        </svg>`;
+    }
+
+    function updateExperimentCounts(total, selected) {
+        const countEl = document.getElementById('experiment-count');
+        const selectedEl = document.getElementById('selected-count');
+        if (countEl) countEl.textContent = total;
+        if (selectedEl) selectedEl.textContent = selected;
+
+        // Enable/disable buttons based on selection
+        const compareBtn = document.getElementById('compare-selected-btn');
+        const deleteBtn = document.getElementById('delete-selected-btn');
+        if (compareBtn) compareBtn.disabled = selected < 2;
+        if (deleteBtn) deleteBtn.disabled = selected === 0;
+    }
+
+    window.toggleExperimentSelection = function (expId, isSelected) {
+        if (isSelected) {
+            selectedExperimentIds.add(expId);
+        } else {
+            selectedExperimentIds.delete(expId);
+        }
+        updateExperimentCounts(allExperiments.length, selectedExperimentIds.size);
+    };
+
+    // Select All checkbox handler
+    document.getElementById('select-all-experiments')?.addEventListener('change', function () {
+        const checkboxes = document.querySelectorAll('.exp-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = this.checked;
+            const expId = cb.dataset.expId;
+            if (this.checked) {
+                selectedExperimentIds.add(expId);
+            } else {
+                selectedExperimentIds.delete(expId);
+            }
+        });
+        updateExperimentCounts(allExperiments.length, selectedExperimentIds.size);
+    });
+
+    // Filter change handlers
+    ['filter-model', 'filter-status', 'filter-acquisition'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', applyFiltersAndRender);
+    });
+
+    // Clear filters button
+    document.getElementById('clear-filters-btn')?.addEventListener('click', () => {
+        document.getElementById('filter-model').value = '';
+        document.getElementById('filter-status').value = '';
+        document.getElementById('filter-acquisition').value = '';
+        applyFiltersAndRender();
+    });
+
+    // Compare Selected button
+    document.getElementById('compare-selected-btn')?.addEventListener('click', async () => {
+        if (selectedExperimentIds.size < 2) {
+            alert('Select at least 2 experiments to compare');
+            return;
+        }
+
+        const experiments = allExperiments.filter(e => selectedExperimentIds.has(e.id));
+        showExperimentComparison(experiments);
+    });
+
+    function showExperimentComparison(experiments) {
+        const content = document.getElementById('experiment-compare-content');
+        if (!content) return;
+
+        const headers = experiments.map(exp => {
+            const model = exp.metrics?.model || exp.name?.split('_')[0] || 'Unknown';
+            return `<th class="text-center">${model}<br><small class="text-muted">${formatTimestamp(exp.start_time)}</small></th>`;
+        }).join('');
+
+        const compareRows = [
+            { label: 'Model', key: exp => exp.metrics?.model || exp.name?.split('_')[0] || '-' },
+            { label: 'Acquisition', key: exp => exp.metrics?.acquisition || exp.config?.acquisition || 'webslamd' },
+            { label: 'Curiosity', key: exp => exp.config?.curiosity?.toFixed(2) || '-' },
+            { label: 'Max Utility', key: exp => exp.metrics?.utility_max?.toFixed(3) || '-' },
+            { label: 'Mean Utility', key: exp => exp.metrics?.utility_mean?.toFixed(3) || '-' },
+            { label: 'Candidates', key: exp => exp.metrics?.num_candidates || '-' },
+            { label: 'Status', key: exp => exp.status || '-' },
+            { label: 'Duration', key: exp => calculateDuration(exp.start_time, exp.end_time) },
+        ];
+
+        const rows = compareRows.map(row => {
+            const cells = experiments.map(exp => `<td class="text-center">${row.key(exp)}</td>`).join('');
+            return `<tr><td><strong>${row.label}</strong></td>${cells}</tr>`;
+        }).join('');
+
+        content.innerHTML = `
+            <table class="table table-bordered table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Metric</th>
+                        ${headers}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+            <div class="alert alert-info mt-3">
+                <i class="bi bi-info-circle"></i> 
+                <strong>Tip:</strong> Higher Max Utility indicates better candidate selection.
+            </div>
+        `;
+
+        const modal = new bootstrap.Modal(document.getElementById('experimentCompareModal'));
+        modal.show();
+    }
+
+    // Delete Selected button
+    document.getElementById('delete-selected-btn')?.addEventListener('click', async () => {
+        if (selectedExperimentIds.size === 0) return;
+
+        if (!confirm(`Delete ${selectedExperimentIds.size} experiment(s)? This cannot be undone.`)) {
+            return;
+        }
+
+        for (const expId of selectedExperimentIds) {
+            await deleteExperimentById(expId, false);
+        }
+
+        selectedExperimentIds.clear();
+        loadExperimentHistory();
+    });
+
+    window.deleteExperiment = async function (expId) {
+        if (!confirm('Delete this experiment? This cannot be undone.')) {
+            return;
+        }
+        await deleteExperimentById(expId, true);
+    };
+
+    async function deleteExperimentById(expId, reload = true) {
+        try {
+            const response = await fetch(`/api/experiments/${expId}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                console.log(`✅ Deleted experiment: ${expId}`);
+                if (reload) loadExperimentHistory();
+            } else {
+                console.error(`Failed to delete experiment: ${expId}`);
+            }
+        } catch (error) {
+            console.error(`Error deleting experiment ${expId}:`, error);
+        }
+    }
+
+    // Make this function global for button onclick
+    window.showExperimentDetail = async function (expId) {
+        try {
+            const response = await fetch(`/api/experiments/${expId}`);
+            const data = await response.json();
+
+            if (!data.success) {
+                alert('Could not load experiment details');
+                return;
+            }
+
+            const exp = data.experiment;
+            const content = document.getElementById('experiment-detail-content');
+
+            content.innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-info-circle"></i> Basic Info</h6>
+                        <table class="table table-sm">
+                            <tr><td><strong>ID</strong></td><td>${exp.id || '-'}</td></tr>
+                            <tr><td><strong>Timestamp</strong></td><td>${formatTimestamp(exp.start_time)}</td></tr>
+                            <tr><td><strong>Status</strong></td><td>${exp.status || '-'}</td></tr>
+                            <tr><td><strong>Duration</strong></td><td>${calculateDuration(exp.start_time, exp.end_time)}</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-gear"></i> Configuration</h6>
+                        <table class="table table-sm">
+                            <tr><td><strong>Model</strong></td><td>${exp.config?.model || '-'}</td></tr>
+                            <tr><td><strong>Acquisition</strong></td><td>${exp.config?.acquisition || 'webslamd'}</td></tr>
+                            <tr><td><strong>Curiosity</strong></td><td>${exp.config?.curiosity || '-'}</td></tr>
+                            <tr><td><strong>Targets</strong></td><td>${exp.config?.num_targets || '-'}</td></tr>
+                        </table>
+                    </div>
+                </div>
+                <hr>
+                <h6><i class="bi bi-graph-up"></i> Metrics</h6>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body py-2">
+                                <div class="fs-4 text-primary">${exp.metrics?.utility_max?.toFixed(3) || '-'}</div>
+                                <small class="text-muted">Max Utility</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body py-2">
+                                <div class="fs-4 text-info">${exp.metrics?.utility_mean?.toFixed(3) || '-'}</div>
+                                <small class="text-muted">Mean Utility</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body py-2">
+                                <div class="fs-4 text-success">${exp.metrics?.num_candidates || '-'}</div>
+                                <small class="text-muted">Candidates</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Show the modal
+            const modal = new bootstrap.Modal(document.getElementById('experimentDetailModal'));
+            modal.show();
+
+        } catch (error) {
+            console.error("Error showing experiment detail:", error);
+            alert('Error loading experiment details');
+        }
+    };
+
+    function formatTimestamp(isoString) {
+        if (!isoString) return '-';
+        try {
+            const date = new Date(isoString);
+            return date.toLocaleString('en-US', {
+                month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        } catch (e) {
+            return isoString;
+        }
+    }
+
+    function calculateDuration(start, end) {
+        if (!start || !end) return '-';
+        try {
+            const startDate = new Date(start);
+            const endDate = new Date(end);
+            const diffMs = endDate - startDate;
+            const diffSecs = Math.round(diffMs / 1000);
+            if (diffSecs < 60) return `${diffSecs}s`;
+            const diffMins = Math.round(diffSecs / 60);
+            return `${diffMins}m ${diffSecs % 60}s`;
+        } catch (e) {
+            return '-';
+        }
+    }
+
+    // Event listener for refresh button
+    const refreshHistoryBtn = document.getElementById('refresh-history-btn');
+    if (refreshHistoryBtn) {
+        refreshHistoryBtn.addEventListener('click', loadExperimentHistory);
+    }
+
+    // Load experiment history on page load
+    loadExperimentHistory();
 
     // GENERIC PLOT HELPER (unchanged except logs)
     function drawPlot(divId, figData) {
@@ -1171,4 +1906,302 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ✅ Try to restore last results when the dashboard page loads
     restoreLastResultsFromCache();
+
+    // ==========================================================
+    //  RESULTS PAGE INTEGRATION
+    // ==========================================================
+
+    let selectedSamplesForResults = new Set();
+    let currentDatasetPath = null;
+
+    // Load projects for dropdown
+    async function loadResultsProjects() {
+        try {
+            const response = await fetch('/api/results/projects');
+            const data = await response.json();
+
+            const select = document.getElementById('results-project-select');
+            if (!select) return;
+
+            // Preserve the first two options
+            const existingOptions = select.innerHTML;
+            select.innerHTML = '<option value="">-- Select project --</option><option value="new">+ Create New Project</option>';
+
+            data.projects.forEach(p => {
+                const option = document.createElement('option');
+                option.value = p.id;
+                option.textContent = `${p.name} (${p.cycle_count} cycles)`;
+                select.appendChild(option);
+            });
+        } catch (err) {
+            console.error('Error loading projects:', err);
+        }
+    }
+
+    // Project selector change handler
+    document.getElementById('results-project-select')?.addEventListener('change', function () {
+        const newProjectInput = document.getElementById('new-project-input');
+        if (this.value === 'new') {
+            newProjectInput.style.display = 'block';
+        } else {
+            newProjectInput.style.display = 'none';
+        }
+        updateSendButtonState();
+    });
+
+    // Update send button state based on selection
+    function updateSendButtonState() {
+        const sendBtn = document.getElementById('send-to-results-btn');
+        const projectSelect = document.getElementById('results-project-select');
+        const newProjectName = document.getElementById('new-project-name-input');
+
+        if (!sendBtn) return;
+
+        const hasProject = projectSelect.value && projectSelect.value !== '' &&
+            (projectSelect.value !== 'new' || newProjectName.value.trim() !== '');
+        const hasSamples = selectedSamplesForResults.size > 0;
+
+        sendBtn.disabled = !(hasProject && hasSamples);
+        document.getElementById('selected-samples-count').textContent = selectedSamplesForResults.size;
+    }
+
+    // New project name input handler
+    document.getElementById('new-project-name-input')?.addEventListener('input', updateSendButtonState);
+
+    // Send to Results button click
+    document.getElementById('send-to-results-btn')?.addEventListener('click', async function () {
+        const projectSelect = document.getElementById('results-project-select');
+        const newProjectName = document.getElementById('new-project-name-input');
+
+        let projectId = projectSelect.value;
+
+        // Create new project if needed
+        if (projectId === 'new') {
+            const name = newProjectName.value.trim();
+            if (!name) {
+                alert('Please enter a project name');
+                return;
+            }
+
+            if (!currentDatasetPath) {
+                alert('No active dataset. Please ensure a dataset is loaded.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/results/projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        dataset_path: currentDatasetPath
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    alert(data.error || 'Failed to create project');
+                    return;
+                }
+
+                projectId = data.project.id;
+            } catch (err) {
+                console.error('Error creating project:', err);
+                alert('Error creating project');
+                return;
+            }
+        }
+
+        // Collect selected samples
+        const samples = [];
+        selectedSamplesForResults.forEach(rowData => {
+            samples.push(rowData);
+        });
+
+        if (samples.length === 0) {
+            alert('No samples selected');
+            return;
+        }
+
+        // Collect target and a-priori column names for lab results
+        const labResultColumns = [];
+
+        // Get target columns from the dashboard
+        document.querySelectorAll('.target-group select[name="target_columns"]').forEach(sel => {
+            if (sel.value) labResultColumns.push(sel.value);
+        });
+
+        // Get a-priori columns from the dashboard  
+        document.querySelectorAll('.apriori-group select[name="apriori_columns"]').forEach(sel => {
+            if (sel.value) labResultColumns.push(sel.value);
+        });
+
+        console.log('📋 Lab result columns:', labResultColumns);
+
+        // Send to Results API
+        try {
+            const response = await fetch('/api/results/cycles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_id: parseInt(projectId),
+                    samples: samples,
+                    lab_result_columns: labResultColumns
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                alert(`Created Cycle ${data.cycle.cycle_number} with ${data.cycle.sample_count} samples!`);
+
+                // Clear selection
+                selectedSamplesForResults.clear();
+                updateSendButtonState();
+
+                // Redirect to Results page
+                window.location.href = '/results';
+            } else {
+                alert(data.error || 'Failed to create cycle');
+            }
+        } catch (err) {
+            console.error('Error creating cycle:', err);
+            alert('Error sending samples to Results');
+        }
+    });
+
+    // Override renderTable to add checkboxes
+    const originalRenderTable = renderTable;
+    renderTable = function (tableHtml) {
+        // Store dataset path for project creation
+        const activeDataset = uploadedDatasets.find(d => d.isActive);
+        if (activeDataset) {
+            // Construct full path from filename (datasets are stored in data/ directory)
+            currentDatasetPath = `data/${activeDataset.filename}`;
+            console.log('📂 Current dataset path:', currentDatasetPath);
+        }
+
+        // Call original renderTable WITHOUT modifications
+        originalRenderTable(tableHtml);
+
+        // Show send to results section
+        document.getElementById('send-to-results-section').style.display = 'block';
+        loadResultsProjects();
+
+        // Setup row click selection after a small delay to ensure DataTable is ready
+        setTimeout(() => {
+            setupRowClickSelection();
+        }, 100);
+    };
+
+    function setupRowClickSelection() {
+        const tbody = resultsTableContainer.querySelector('tbody');
+        if (!tbody || tbody.dataset.selectionInitialized) return;
+
+        tbody.dataset.selectionInitialized = 'true';
+
+        // Add click handler to all body rows
+        tbody.addEventListener('click', (e) => {
+            const row = e.target.closest('tr');
+            if (!row) return;
+
+            // Toggle selection
+            const isSelected = row.classList.toggle('table-success');
+
+            if (isSelected) {
+                addSampleToSelection(row);
+            } else {
+                removeSampleFromSelection(row);
+            }
+
+            updateSendButtonState();
+        });
+
+        console.log('✅ Row click selection enabled - click rows to select for Results');
+    }
+
+    function addSampleToSelection(row) {
+        const cells = row.querySelectorAll('td');
+        const rowData = {};
+
+        // Get column headers
+        const table = row.closest('table');
+        const headers = table.querySelectorAll('thead th');
+
+        // Extract row data
+        cells.forEach((cell, idx) => {
+            if (headers[idx]) {
+                const colName = headers[idx].textContent.trim();
+                const value = cell.textContent.trim();
+                rowData[colName] = isNaN(parseFloat(value)) ? value : parseFloat(value);
+            }
+        });
+
+        // Get IDX_SAMPLE - check multiple possible column names (case variations)
+        // Priority: Idx_Sample > IDX_SAMPLE > idx_sample, then fallback to Row number
+        const idxSample = rowData['Idx_Sample'] || rowData['IDX_SAMPLE'] || rowData['idx_sample'] ||
+            rowData['IdxSample'] || rowData['Row number'] || rowData['index'] || 0;
+
+        console.log('📌 Sample selected with idx_sample:', idxSample, 'from row data:', rowData);
+
+        // Separate predictions from input data
+        const predictions = {};
+        const inputData = {};
+
+        for (const [key, value] of Object.entries(rowData)) {
+            if (key.startsWith('Predicted_') || key.includes('Uncertainty') || key === 'Utility' || key === 'Novelty') {
+                predictions[key] = value;
+            } else {
+                inputData[key] = value;
+            }
+        }
+
+        // Use a unique key for the Map
+        const sampleKey = String(idxSample);
+
+        // Store in a Map for easier lookup
+        if (!window.selectedSamplesMap) {
+            window.selectedSamplesMap = new Map();
+        }
+
+        window.selectedSamplesMap.set(sampleKey, {
+            idx_sample: idxSample,
+            row_data: inputData,
+            predictions: predictions
+        });
+
+        // Sync to Set
+        selectedSamplesForResults.clear();
+        window.selectedSamplesMap.forEach(v => selectedSamplesForResults.add(v));
+    }
+
+    function removeSampleFromSelection(row) {
+        const cells = row.querySelectorAll('td');
+        const table = row.closest('table');
+        const headers = table.querySelectorAll('thead th');
+
+        // Find IDX_SAMPLE column - check multiple case variations
+        let idxSample = 0;
+        cells.forEach((cell, idx) => {
+            if (headers[idx]) {
+                const colName = headers[idx].textContent.trim();
+                if (colName === 'Idx_Sample' || colName === 'IDX_SAMPLE' || colName === 'idx_sample' ||
+                    colName === 'IdxSample' || colName === 'Row number' || colName === 'index') {
+                    idxSample = parseFloat(cell.textContent.trim());
+                }
+            }
+        });
+
+        const sampleKey = String(idxSample);
+
+        if (window.selectedSamplesMap) {
+            window.selectedSamplesMap.delete(sampleKey);
+        }
+
+        // Sync to Set
+        selectedSamplesForResults.clear();
+        if (window.selectedSamplesMap) {
+            window.selectedSamplesMap.forEach(v => selectedSamplesForResults.add(v));
+        }
+    }
 });
