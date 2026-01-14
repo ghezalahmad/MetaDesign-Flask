@@ -367,10 +367,8 @@ Respond with ONLY valid JSON containing the predicted values."""
         def normalize_name(name):
             """Normalize a column name for comparison by removing special chars."""
             import re
-            # Remove everything except alphanumeric and spaces, then lowercase
-            normalized = re.sub(r'[^a-zA-Z0-9\s]', '', str(name).lower())
-            # Replace multiple spaces with single space and strip
-            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            # Remove everything except alphanumeric, then lowercase
+            normalized = re.sub(r'[^a-zA-Z0-9]', '', str(name).lower())
             return normalized
         
         try:

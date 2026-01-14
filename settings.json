@@ -1,5 +1,5 @@
 {
-    "active_learning_mode": "HYBRID_MODE",
+    "active_learning_mode": "LLM_AGENT_MODE",
     "prompt_style": "parameter-format",
     "hybrid_weights": {
         "w_llm": 0.4,
@@ -10,7 +10,7 @@
     "cohere_api_key": "",
     "llm_provider": "ollama",
     "ollama_model": "mistral:latest",
-    "llm_strategy": "balanced",
+    "llm_strategy": "exploit",
     "rl_weight": 0.3,
     "mlflow_enabled": true,
     "mlflow_tracking_uri": "",

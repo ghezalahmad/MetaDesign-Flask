@@ -237,6 +237,19 @@ class PlotGenerator:
             is_train = df.get('is_train_data', pd.Series([False] * len(df)))
             selected = df.get('Selected for Testing', pd.Series([False] * len(df)))
             
+            # Debug: Check column values
+            print(f"📊 TSNE DEBUG: 'Selected for Testing' column exists: {'Selected for Testing' in df.columns}")
+            if 'Selected for Testing' in df.columns:
+                print(f"📊 TSNE DEBUG: Selected column dtype: {df['Selected for Testing'].dtype}")
+                print(f"📊 TSNE DEBUG: Selected column values (unique): {df['Selected for Testing'].unique()}")
+                print(f"📊 TSNE DEBUG: Selected True count: {(df['Selected for Testing'] == True).sum()}")
+                print(f"📊 TSNE DEBUG: Selected 'True' string count: {(df['Selected for Testing'] == 'True').sum()}")
+            
+            # Handle both boolean and string "True"/"False"
+            if selected.dtype == object:
+                selected = selected.astype(str).str.lower() == 'true'
+                print(f"📊 TSNE DEBUG: Converted string to bool, selected count: {selected.sum()}")
+            
             # Unlabeled candidates (gray)
             unlabeled_idx = [i for i in range(len(df)) 
                            if not is_train.iloc[i] and not selected.iloc[i]]

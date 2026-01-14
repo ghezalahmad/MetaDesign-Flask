@@ -116,7 +116,7 @@ def run_experiment():
         
         tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns, cache_key=tsne_cache_key)
         
-        cols_to_merge = ['Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score']
+        cols_to_merge = ['Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score', 'Selected for Testing']
         common_indices = tsne_df.index.intersection(results_df.index)
         
         for col in cols_to_merge:
