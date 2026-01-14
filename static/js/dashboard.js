@@ -3,6 +3,11 @@
 //  + LOCALSTORAGE CACHING & RESTORE
 // ==========================================================
 
+// Debug mode - only log to console in development
+const DEBUG = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const log = (...args) => { if (DEBUG) console.log(...args); };
+const warn = (...args) => { if (DEBUG) console.warn(...args); };
+
 // Helper function to show error modal popup
 function showErrorModal(title, message, allErrors = []) {
     // Remove any existing modal
@@ -906,6 +911,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const w_llm = parseFloat(document.getElementById('w_llm')?.value || 0.5);
         const w_ml = parseFloat(document.getElementById('w_ml')?.value || 0.5);
         const acquisitionFunc = document.getElementById('acquisition-select')?.value || 'webslamd';
+        const batchSize = parseInt(document.getElementById('batch-size-select')?.value || 1);
 
         const payload = {
             model: modelSelect.value,
@@ -917,7 +923,8 @@ document.addEventListener("DOMContentLoaded", () => {
             acquisition_function: acquisitionFunc,
             active_learning_mode: mode,
             prompt_style: promptStyle,
-            hybrid_weights: { w_llm, w_ml }
+            hybrid_weights: { w_llm, w_ml },
+            batch_size: batchSize
         };
 
         // Store config for Excel export with metadata
@@ -1189,6 +1196,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 deferRender: true,  // Performance optimization
                 dom: 'lfrtipB',
                 orderCellsTop: true,  // Keep sorting on first header row
+                // Highlight rows where "Selected for Testing" is True
+                createdRow: function (row, data, dataIndex) {
+                    // Find the column index for "Selected for Testing"
+                    const headers = Array.from(newTable.querySelectorAll('thead th')).map(th => th.textContent.trim());
+                    const selectedColIdx = headers.findIndex(h => h.toLowerCase().includes('selected for testing'));
+
+                    if (selectedColIdx >= 0 && data[selectedColIdx]) {
+                        const cellValue = String(data[selectedColIdx]).toLowerCase().trim();
+                        if (cellValue === 'true' || cellValue === '1' || cellValue === 'yes') {
+                            row.classList.add('table-primary', 'fw-bold');
+                            row.style.backgroundColor = '#cfe2ff';  // Light blue highlight
+                            row.style.borderLeft = '4px solid #0d6efd';  // Blue left border
+                        }
+                    }
+                },
                 buttons: [
                     {
                         extend: 'csv',

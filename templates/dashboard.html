@@ -250,10 +250,25 @@
                         <option value="thompson">Thompson Sampling</option>
                     </select>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-3">
+                    <label for="batch-size-select" class="form-label d-flex align-items-center">
+                        Samples per Iteration
+                        <button class="btn btn-sm btn-info help-button ms-2" type="button" data-bs-toggle="popover"
+                            data-bs-placement="right"
+                            data-bs-content="Number of samples to select for testing per iteration. Uses diversity-aware selection to avoid redundant picks.">
+                            <i class="bi bi-question-circle-fill"></i>
+                        </button>
+                    </label>
+                    <select class="form-select" id="batch-size-select">
+                        <option value="1" selected>1 sample</option>
+                        <option value="3">3 samples</option>
+                        <option value="5">5 samples</option>
+                        <option value="10">10 samples</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
                     <p class="text-muted small mt-4" id="acquisition-description">
-                        <strong>WEBSLAMD:</strong> Normalized predictions + weighted uncertainty. Standard for materials
-                        discovery.
+                        <strong>WEBSLAMD:</strong> Normalized predictions + weighted uncertainty.
                     </p>
                 </div>
             </div>

@@ -35,6 +35,7 @@ class HybridEngine:
         # ============================================================
         if mode == "ML_MODE":
             acquisition = config.get('acquisition_function', 'webslamd')
+            batch_size = int(config.get('batch_size', 1))
             result_df = MLEngine.run_experiment(
                 data, 
                 config.get('model'), 
@@ -42,7 +43,8 @@ class HybridEngine:
                 target_columns_config,
                 curiosity=float(config.get('curiosity', 0.5)),
                 apriori_config=config.get('apriori_columns'),
-                acquisition_function=acquisition
+                acquisition_function=acquisition,
+                batch_size=batch_size
             )
             # Record trajectory for ML mode
             cls._record_trajectory(result_df, input_columns, mode)
@@ -61,7 +63,8 @@ class HybridEngine:
             return cls._run_hybrid_mode(data, config, input_columns, target_names)
 
         # Fallback to ML mode
-        return MLEngine.run_experiment(data, config.get('model'), input_columns, target_columns_config)
+        batch_size = int(config.get('batch_size', 1))
+        return MLEngine.run_experiment(data, config.get('model'), input_columns, target_columns_config, batch_size=batch_size)
 
     @classmethod
     def _run_llm_only_mode(cls, data, config, input_columns, target_names):
@@ -70,6 +73,9 @@ class HybridEngine:
         Follows LLM-AL paper approach.
         """
         logging.info("🧠 Running in LLM-ONLY mode (no ML surrogate)")
+        print("\n" + "="*60)
+        print("🧠 LLM-ONLY MODE - Starting experiment")
+        print("="*60)
         
         # Get LLM agent and semantic matcher
         agent = cls._get_llm_agent()
@@ -111,15 +117,43 @@ class HybridEngine:
         result_df = data.copy()
         result_df['Utility'] = 0.0
         result_df['Selected for Testing'] = False
-        result_df['Predicted'] = np.nan  # No predictions in LLM-only mode
-        result_df['Uncertainty'] = np.nan
+        result_df['Uncertainty'] = 0.1  # LLM doesn't provide uncertainty
         result_df['is_train_data'] = ~unlabeled_mask  # Labeled = True, Unlabeled = False
+        
+        # Initialize prediction columns
+        for col in target_names:
+            if col not in result_df.columns or result_df[col].isna().all():
+                result_df[f"LLM_Predicted_{col}"] = np.nan
         
         if best_match_row is not None:
             match_idx = best_match_row.name
             result_df.loc[match_idx, 'Utility'] = 1.0
             result_df.loc[match_idx, 'Selected for Testing'] = True
             logging.info(f"✅ LLM Selected Candidate Index: {match_idx} (Semantic Score: {score:.3f})")
+            print(f"✅ LLM Selected Candidate Index: {match_idx} (Score: {score:.3f})")
+            print(f"🔮 Calling LLM to predict target values...")
+            
+            # Ask LLM to predict values for the selected sample
+            try:
+                predictions = agent.predict_values(
+                    sample_row=best_match_row,
+                    input_columns=input_columns,
+                    target_columns=target_names,
+                    history_df=history_df,
+                    target_config=target_config
+                )
+                
+                # Populate the predicted values for the selected sample
+                for col, value in predictions.items():
+                    result_df.loc[match_idx, col] = value
+                    logging.info(f"🔮 LLM Prediction for {col}: {value}")
+                    print(f"🔮 LLM Prediction for {col}: {value}")
+                    
+            except Exception as e:
+                logging.warning(f"LLM prediction failed: {e}")
+                print(f"❌ LLM prediction FAILED: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Record trajectory for LLM mode
         cls._record_trajectory(result_df, input_columns, "LLM_AGENT_MODE")
@@ -133,13 +167,16 @@ class HybridEngine:
         """
         logging.info("🔀 Running in HYBRID mode (ML + LLM)")
         
-        # 1. Run ML to get predictions and base utility
+        batch_size = int(config.get('batch_size', 1))
+        
+        # 1. Run ML to get predictions and base utility (batch_size=1, we'll apply batch after fusion)
         ml_results_df = MLEngine.run_experiment(
             data, 
             config.get('model'), 
             input_columns, 
             config.get('target_columns'),
-            curiosity=float(config.get('curiosity', 0.5))
+            curiosity=float(config.get('curiosity', 0.5)),
+            batch_size=1  # We apply batch selection after fusion
         )
         
         # 2. Get LLM proposal with optimization direction
@@ -193,6 +230,16 @@ class HybridEngine:
         ml_results_df['Utility'] = final_scores
         
         logging.info(f"✅ Hybrid fusion complete. w_ml={w_ml}, w_llm={w_llm}")
+        
+        # 4. Apply batch selection after fusion
+        from app.utils.batch_selector import select_batch
+        ml_results_df = select_batch(
+            ml_results_df, 
+            n_samples=batch_size, 
+            input_columns=input_columns,
+            diversity_weight=0.3
+        )
+        logging.info(f"✅ Batch selection: {batch_size} samples selected")
         
         # Record trajectory for Hybrid mode
         cls._record_trajectory(ml_results_df, input_columns, "HYBRID_MODE")

@@ -100,7 +100,7 @@ class MLEngine:
     @staticmethod
     def run_experiment(data, model_name, input_columns, target_columns_config, 
                        curiosity=0.5, apriori_config=None,
-                       acquisition_function='webslamd'):
+                       acquisition_function='webslamd', batch_size=1):
         """
         Executes the ML pipeline: Preprocessing -> Training -> Evaluation -> Utility Calculation
         
@@ -132,7 +132,7 @@ class MLEngine:
         try:
             result = MLEngine._run_pipeline(
                 data, model_name, input_columns, target_columns_config,
-                curiosity, apriori_config, acquisition_function
+                curiosity, apriori_config, acquisition_function, batch_size
             )
             
             # Log success metrics
@@ -181,7 +181,7 @@ class MLEngine:
     
     @staticmethod
     def _run_pipeline(data, model_name, input_columns, target_columns_config,
-                      curiosity, apriori_config, acquisition_function):
+                      curiosity, apriori_config, acquisition_function, batch_size=1):
         """Internal pipeline execution."""
         
         # --- Create WEBSLAMD-style ExperimentData ---
@@ -329,6 +329,16 @@ class MLEngine:
         
         if 'Uncertainty' not in results_df.columns or results_df['Uncertainty'].max() < 1e-6:
             results_df['Uncertainty'] = results_df['Utility'].abs() * 0.2 + 0.01
+
+        # --- Apply Batch Selection ---
+        from app.utils.batch_selector import select_batch
+        results_df = select_batch(
+            results_df, 
+            n_samples=batch_size, 
+            input_columns=input_columns,
+            diversity_weight=0.3
+        )
+        logger.info(f"✅ Batch selection: {batch_size} samples selected (diversity_weight=0.3)")
 
         return results_df
     

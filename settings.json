@@ -1,5 +1,5 @@
 {
-    "active_learning_mode": "ML_MODE",
+    "active_learning_mode": "HYBRID_MODE",
     "prompt_style": "parameter-format",
     "hybrid_weights": {
         "w_llm": 0.4,
