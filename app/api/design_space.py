@@ -31,39 +31,10 @@ def generate_feature_values(feature):
     return feature['values']
 
 
-@design_space_bp.route("/scenario", methods=["GET", "POST"])
+@design_space_bp.route("/scenario", methods=["GET"])
 def scenario():
-    """Handle scenario management page."""
-    scenario_file = os.path.join(os.path.dirname(__file__), "..", "..", "data", "scenarios.csv")
-
-    default_data = [
-        ["Scenario 1", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
-        ["Scenario 2", 10125, 240, 8.0, 15, 675, 2, 10, 5, 120, 4.5],
-        ["Scenario 3", 10800, 240, 8.0, 16, 675, 2, 12, 4, 120, 4.8],
-        ["Scenario 4", 10200, 240, 8.0, 24, 425, 2, 16, 8, 120, 7.3],
-        ["Scenario 5 (Selected Scenario)", 10200, 224, 7.5, 34, 300, 8, 6, 4, 28, 10.3],
-        ["Scenario ALL SAMPLES", 165000, 120, 4.0, 330, 500, 1, 330, 0, 120, 100.0]
-    ]
-
-    columns = [
-        "Scenario", "Total Cost (EUR)", "Total Duration (days)", "Total Duration (months)",
-        "Total Recipes Tested", "Cost per Recipe (EUR)", "No. of cycles",
-        "No. of initial recipes", "No. of recipes per cycle",
-        "Duration per Cycle (days)", "Coverage of material space (%)"
-    ]
-
-    if os.path.exists(scenario_file):
-        data = pd.read_csv(scenario_file)
-    else:
-        data = pd.DataFrame(default_data, columns=columns)
-        data.to_csv(scenario_file, index=False)
-
-    if request.method == "POST":
-        updated_data = request.get_json()
-        pd.DataFrame(updated_data, columns=columns).to_csv(scenario_file, index=False)
-        return jsonify({"success": True, "message": "Scenarios updated successfully."})
-
-    return render_template("scenario.html", data=data.to_dict(orient="records"), columns=columns)
+    """Render the scenario management page."""
+    return render_template("scenario.html")
 
 
 @design_space_bp.route("/api/scenario-to-design-space", methods=["GET"])
@@ -337,3 +308,114 @@ def get_design_space_info():
     except Exception as e:
         logger.error(f"Error reading design space file: {e}")
         return jsonify({'success': False, 'error': str(e)})
+
+
+@design_space_bp.route('/api/design-space-data/<filename>', methods=['GET'])
+def get_design_space_data(filename):
+    """
+    Get design space data for editing in the UI.
+    Returns columns with metadata (including which have NaN values) and all data rows.
+    """
+    filename = secure_filename(filename)
+    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
+    filepath = os.path.join(design_space_dir, filename)
+    
+    # Security check
+    if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    if not os.path.exists(filepath):
+        return jsonify({'success': False, 'error': 'File not found.'}), 404
+    
+    try:
+        df = pd.read_csv(filepath)
+        
+        # Build column metadata
+        columns_meta = []
+        for col in df.columns:
+            nan_count = int(df[col].isna().sum())
+            is_numeric = pd.api.types.is_numeric_dtype(df[col])
+            columns_meta.append({
+                'name': col,
+                'nan_count': nan_count,
+                'has_nan': nan_count > 0,
+                'is_numeric': is_numeric,
+                'is_target': nan_count == len(df)  # All NaN = likely a target column
+            })
+        
+        # Convert DataFrame to list of dicts, handling NaN values properly
+        # Use pandas to_json with orient='records' which properly converts NaN to null
+        import json
+        data = json.loads(df.to_json(orient='records'))
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'columns': columns_meta,
+            'data': data,
+            'row_count': len(df)
+        })
+    except Exception as e:
+        logger.error(f"Error reading design space file for editing: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@design_space_bp.route('/api/design-space-data/<filename>', methods=['POST'])
+def save_design_space_data(filename):
+    """
+    Save updated column values to the design space CSV.
+    Expects JSON body: { column: "column_name", updates: { row_index: value, ... } }
+    """
+    filename = secure_filename(filename)
+    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
+    filepath = os.path.join(design_space_dir, filename)
+    
+    # Security check
+    if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    
+    if not os.path.exists(filepath):
+        return jsonify({'success': False, 'error': 'File not found.'}), 404
+    
+    try:
+        payload = request.get_json()
+        column = payload.get('column')
+        updates = payload.get('updates', {})
+        
+        if not column:
+            return jsonify({'success': False, 'error': 'No column specified.'}), 400
+        
+        df = pd.read_csv(filepath)
+        
+        if column not in df.columns:
+            return jsonify({'success': False, 'error': f'Column "{column}" not found.'}), 400
+        
+        # Apply updates
+        updated_count = 0
+        for row_idx, value in updates.items():
+            row_idx = int(row_idx)
+            if 0 <= row_idx < len(df):
+                # Convert to appropriate type
+                if value is None or value == '' or value == 'null':
+                    df.at[row_idx, column] = np.nan
+                else:
+                    try:
+                        df.at[row_idx, column] = float(value)
+                    except (ValueError, TypeError):
+                        df.at[row_idx, column] = value
+                updated_count += 1
+        
+        # Save back to CSV
+        df.to_csv(filepath, index=False)
+        
+        logger.info(f"Updated {updated_count} values in column '{column}' of {filename}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Updated {updated_count} values in column "{column}".',
+            'updated_count': updated_count
+        })
+    except Exception as e:
+        logger.error(f"Error saving design space data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+

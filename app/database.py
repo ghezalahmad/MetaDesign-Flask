@@ -22,18 +22,103 @@ class Project(db.Model):
     name = db.Column(db.String(255), nullable=False)
     dataset_path = db.Column(db.String(512), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    active_scenario_id = db.Column(db.Integer, db.ForeignKey('scenarios.id', use_alter=True), nullable=True)
     
-    # Relationship
+    # Relationships
     cycles = db.relationship('Cycle', backref='project', lazy=True, cascade='all, delete-orphan')
+    scenarios = db.relationship('Scenario', backref='project', lazy=True, cascade='all, delete-orphan',
+                                foreign_keys='Scenario.project_id')
     
-    def to_dict(self):
-        return {
+    def to_dict(self, include_scenarios=False):
+        data = {
             'id': self.id,
             'name': self.name,
             'dataset_path': self.dataset_path,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'cycle_count': len(self.cycles)
+            'cycle_count': len(self.cycles),
+            'active_scenario_id': self.active_scenario_id
         }
+        if include_scenarios:
+            data['scenarios'] = [s.to_dict() for s in self.scenarios]
+        return data
+    
+    def get_progress(self):
+        """Calculate current progress against active scenario."""
+        if not self.active_scenario_id:
+            return None
+        
+        active_scenario = Scenario.query.get(self.active_scenario_id)
+        if not active_scenario:
+            return None
+        
+        # Calculate progress metrics
+        total_samples_tested = sum(len(c.samples) for c in self.cycles)
+        completed_samples = sum(
+            sum(1 for s in c.samples if s.status == 'completed') 
+            for c in self.cycles
+        )
+        
+        planned_total = active_scenario.initial_samples + (
+            active_scenario.planned_cycles * active_scenario.samples_per_cycle
+        )
+        
+        return {
+            'cycles_completed': len(self.cycles),
+            'cycles_planned': active_scenario.planned_cycles,
+            'samples_tested': completed_samples,
+            'samples_planned': planned_total,
+            'cost_spent': completed_samples * active_scenario.cost_per_sample,
+            'cost_budget': planned_total * active_scenario.cost_per_sample,
+            'days_elapsed': (datetime.utcnow() - self.created_at).days if self.created_at else 0,
+            'days_planned': active_scenario.duration_per_cycle_days * active_scenario.planned_cycles,
+            'coverage_current': (completed_samples / planned_total * 100) if planned_total > 0 else 0,
+            'coverage_target': active_scenario.target_coverage
+        }
+
+
+class Scenario(db.Model):
+    """A scenario represents an experimental plan for a project."""
+    __tablename__ = 'scenarios'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    
+    # Planning parameters
+    planned_cycles = db.Column(db.Integer, default=2)
+    samples_per_cycle = db.Column(db.Integer, default=5)
+    initial_samples = db.Column(db.Integer, default=10)
+    duration_per_cycle_days = db.Column(db.Integer, default=30)
+    cost_per_sample = db.Column(db.Float, default=100.0)
+    target_coverage = db.Column(db.Float, default=10.0)  # Target coverage percentage
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    notes = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        # Calculate estimated totals
+        total_samples = self.initial_samples + (self.planned_cycles * self.samples_per_cycle)
+        total_cost = total_samples * self.cost_per_sample
+        total_duration = self.planned_cycles * self.duration_per_cycle_days
+        
+        return {
+            'id': self.id,
+            'project_id': self.project_id,
+            'name': self.name,
+            'planned_cycles': self.planned_cycles,
+            'samples_per_cycle': self.samples_per_cycle,
+            'initial_samples': self.initial_samples,
+            'duration_per_cycle_days': self.duration_per_cycle_days,
+            'cost_per_sample': self.cost_per_sample,
+            'target_coverage': self.target_coverage,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'notes': self.notes,
+            # Computed fields
+            'total_samples': total_samples,
+            'total_cost': total_cost,
+            'total_duration_days': total_duration
+        }
+
 
 
 class Cycle(db.Model):

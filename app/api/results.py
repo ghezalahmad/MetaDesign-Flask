@@ -116,6 +116,12 @@ def create_cycle():
     
     project = Project.query.get_or_404(project_id)
     
+    # Auto-set dataset_path if not already set
+    dataset_path = data.get('dataset_path')
+    if dataset_path and (not project.dataset_path or project.dataset_path == ''):
+        project.dataset_path = dataset_path
+        db.session.commit()
+    
     # Determine the next cycle number
     max_cycle = db.session.query(db.func.max(Cycle.cycle_number))\
                           .filter_by(project_id=project_id).scalar() or 0

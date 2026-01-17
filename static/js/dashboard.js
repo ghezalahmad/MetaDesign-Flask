@@ -2068,7 +2068,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({
                     project_id: parseInt(projectId),
                     samples: samples,
-                    lab_result_columns: labResultColumns
+                    lab_result_columns: labResultColumns,
+                    dataset_path: currentDatasetPath  // Auto-link dataset to project
                 })
             });
 

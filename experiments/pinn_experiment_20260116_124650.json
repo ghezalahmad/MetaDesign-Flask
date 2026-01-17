@@ -1,5 +1,5 @@
 {
-  "id": "pinn_experiment_20260113_221437",
+  "id": "pinn_experiment_20260116_124650",
   "name": "pinn_experiment",
   "config": {
     "model": "pinn",
@@ -11,16 +11,16 @@
   "tags": [],
   "metrics": {
     "num_candidates": 138,
-    "utility_max": 1.0628144463466387,
-    "utility_mean": -0.547611496460204
+    "utility_max": 1.11030121921587,
+    "utility_mean": -0.48463113743517694
   },
-  "start_time": "2026-01-13T22:14:37.520328",
-  "end_time": "2026-01-13T22:14:39.365349",
+  "start_time": "2026-01-16T12:46:50.525062",
+  "end_time": "2026-01-16T12:46:51.686423",
   "status": "completed",
   "results_summary": {
     "num_candidates": 138,
-    "utility_mean": -0.547611496460204,
-    "utility_max": 1.0628144463466387,
+    "utility_mean": -0.48463113743517694,
+    "utility_max": 1.11030121921587,
     "selected_sample": [
       {
         "Idx_Sample": 1491,
@@ -39,11 +39,11 @@
         "water -eff": 107.80714,
         "Slump - Target (mm)": NaN,
         "CO2 (kg/t) - A-priori Information": 116.12407,
-        "fc 28-d - Target (MPa)": 58.04909133911133,
+        "fc 28-d - Target (MPa)": 58.41823959350586,
         "Row number": 57,
-        "Uncertainty (fc 28-d - Target (MPa))": 2.5774274749308828,
-        "Utility": 1.0628144463466387,
-        "Uncertainty": 2.5774274749308828,
+        "Uncertainty (fc 28-d - Target (MPa))": 3.0108838090300565,
+        "Utility": 1.11030121921587,
+        "Uncertainty": 3.0108838090300565,
         "Novelty": 0.19604652405453704,
         "Selected for Testing": true
       }
