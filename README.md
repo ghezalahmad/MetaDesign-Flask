@@ -18,6 +18,16 @@ The seven added capabilities are:
 
 The results page also includes Decision Intelligence plots for Pareto trade-offs, trust diagnostics, selected batch recommendations, and cost/fidelity awareness. The t-SNE graph window can be redrawn by selected parameters, including `TSNE_X` vs `TSNE_Y`, color fields, and population overlays.
 
+## Active Learning and BO Behavior
+
+The acquisition functions are implemented as design-space ranking tools. They do not mathematically guarantee discovery of the true global optimum, but they prioritize the next experiment using the current surrogate model, target directions, uncertainty, and observed data.
+
+- `Curiosity = 0` is pure exploitation: candidates are ranked mainly by predicted objective quality.
+- `Curiosity > 0` adds exploration pressure: candidates with higher model uncertainty can move up the ranking.
+- WEBSLAMD, UCB, Expected Improvement, and Thompson Sampling normalize target scales and respect maximize/minimize directions before combining objectives.
+- Classic ML and hybrid ML+LLM modes pass the selected acquisition function into the ML surrogate path. Hybrid mode then fuses normalized ML acquisition utility with the LLM semantic proposal score.
+- LLM-only mode can recommend from the design space through semantic matching and the shared Decision Intelligence layer, but true Bayesian optimization uncertainty requires the ML or hybrid surrogate path.
+
 ## Setup
 
 1.  **Clone the repository:**

@@ -204,6 +204,12 @@ def evaluate_dkl_model(model: DKLModel, labeled_data: pd.DataFrame, candidate_in
 
     # 2. Prepare the results DataFrame
     candidate_df = candidate_inputs.copy()
+    identity = candidate_inputs.attrs.get("identity_columns")
+    if identity is not None:
+        for col in identity.columns:
+            candidate_df[col] = identity[col].reindex(candidate_inputs.index).values
+    elif "Row number" not in candidate_df.columns:
+        candidate_df["Row number"] = candidate_inputs.index.to_series().values + 1
     
     for i, col in enumerate(target_columns):
         candidate_df[col] = predictions[:, i]

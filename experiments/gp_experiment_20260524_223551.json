@@ -1,0 +1,50 @@
+{
+  "id": "gp_experiment_20260524_223551",
+  "name": "gp_experiment",
+  "config": {
+    "model": "gp",
+    "acquisition": "ucb",
+    "curiosity": 1.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 138,
+    "utility_max": 2.445412906463789,
+    "utility_mean": 1.0653398319797711
+  },
+  "start_time": "2026-05-24T22:35:51.069534",
+  "end_time": "2026-05-24T22:35:51.151633",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 138,
+    "utility_mean": 1.0653398319797711,
+    "utility_max": 2.445412906463789,
+    "selected_sample": [
+      {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 180,
+        "GGBFS (kg/m3)": 180,
+        "Coarse aggregate (kg/m3)": 1090.8446,
+        "Fine aggregate (kg/m3)": 773.9554,
+        "Total aggregates": 1864.8,
+        "Na2SiO3": 115.71429,
+        "Na2O (Dry)": 13.31,
+        "Sio2 (Dry)": 34.71,
+        "Superplasticizer": 14.4,
+        "water -eff": 107.80714,
+        "Row number": 57,
+        "Idx_Sample": 1491,
+        "fc 28-d - Target (MPa)": 57.21471540735054,
+        "Uncertainty (fc 28-d - Target (MPa))": 5.791145567571944,
+        "Utility": 2.445412906463789,
+        "Uncertainty": 5.791145567571944,
+        "Novelty": 0.19604652405453704,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

@@ -18,6 +18,13 @@ import numpy as np
 import pandas as pd
 
 
+def _exploration_weight(curiosity: float) -> float:
+    try:
+        return max(0.0, float(curiosity))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def calculate_webslamd_utility(
     predictions: np.ndarray,
     uncertainties: np.ndarray,
@@ -111,6 +118,6 @@ def calculate_webslamd_utility(
         apriori_sum = normed_apriori.sum(axis=1).values
     
     # WEBSLAMD utility formula
-    utility = apriori_sum + pred_sum + curiosity * unc_sum
+    utility = apriori_sum + pred_sum + _exploration_weight(curiosity) * unc_sum
     
     return utility

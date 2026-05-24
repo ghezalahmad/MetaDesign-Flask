@@ -230,15 +230,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const value = parseFloat(curiositySlider.value);
         curiosityValueDisplay.textContent = value.toFixed(1);
 
-        if (value < -1.0) {
-            curiosityGuidanceText.textContent = "Heavy EXPLOITATION: System prioritizes materials predicted to have the highest performance, ignoring model uncertainty. Useful for confirming known optima, but high-risk.";
-        } else if (value >= -1.0 && value < -0.2) {
-            curiosityGuidanceText.textContent = "Focused EXPLOITATION: Prioritizes high-performing, well-understood regions. Use this when you are confident in your model's predictions.";
-        } else if (value >= -0.2 && value <= 0.2) {
-            curiosityGuidanceText.textContent = "Balanced Approach: Equal weighting between performance (Exploit) and uncertainty (Explore). A good default for a mix of optimization and learning.";
-        } else if (value > 0.2 && value <= 1.0) {
+        if (value <= 0.1) {
+            curiosityGuidanceText.textContent = "Pure EXPLOITATION: selects candidates mainly by predicted target performance. Useful when the model is already trusted.";
+        } else if (value > 0.1 && value < 0.8) {
+            curiosityGuidanceText.textContent = "Light EXPLORATION: still prioritizes predicted performance, with a modest uncertainty bonus.";
+        } else if (value >= 0.8 && value <= 1.2) {
+            curiosityGuidanceText.textContent = "Balanced Approach: combines predicted performance with uncertainty to improve the model while optimizing.";
+        } else if (value > 1.2 && value <= 1.7) {
             curiosityGuidanceText.textContent = "Focused EXPLORATION: System prioritizes regions where the model is most uncertain, seeking new data to improve predictions. Use this when data is sparse or incomplete.";
-        } else if (value > 1.0) {
+        } else if (value > 1.7) {
             curiosityGuidanceText.textContent = "Heavy EXPLORATION: Strongly focused on uncertainty. Will primarily seek information in completely unknown areas, essential for discovering novel material classes.";
         }
     });

@@ -508,7 +508,7 @@ def evaluate_maml(model, data: pd.DataFrame, input_columns: list,
         unc_norm[:, i] = uncertainties[:, i] / std_val
         unc_norm[:, i] *= weights_targets[i]
     
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    utility_scores = preds_norm.sum(axis=1) + max(0.0, float(curiosity)) * unc_norm.sum(axis=1)
     candidate_df["Utility"] = utility_scores
     candidate_df["Utility"] = pd.to_numeric(candidate_df["Utility"], errors="coerce").fillna(0.0).astype(float)
 

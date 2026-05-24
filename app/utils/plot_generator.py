@@ -407,7 +407,7 @@ class PlotGenerator:
     # ======================================================
     @classmethod
     def create_optimization_history_plot(cls, df: pd.DataFrame, target_columns):
-        """X=Row Number, Y=Cumulative Max of Target"""
+        """Plot measured target values already present in the uploaded dataset."""
         if df is None or df.empty:
             return {'data': [], 'layout': {'title': 'No data available'}}
             
@@ -452,8 +452,8 @@ class PlotGenerator:
         ))
 
         fig.update_layout(
-            title="Optimization History",
-            xaxis_title="Iteration (Row #)",
+            title="Observed Optimization History",
+            xaxis_title="Dataset row with measured target",
             yaxis_title=f"Best {target_col}",
             plot_bgcolor="#f7f7f7",
             paper_bgcolor="#f7f7f7",

@@ -263,7 +263,10 @@ class MLEngine:
             if model_name in ['dkl', 'gp']:
                 labeled_data = data.dropna(subset=target_columns)
                 candidate_data = data[data[target_columns[0]].isnull()] if isinstance(target_columns, list) else data[data[target_columns].isnull()]
-                candidate_inputs = candidate_data[input_columns]
+                candidate_inputs = candidate_data[input_columns].copy()
+                identity_columns = [c for c in ['Row number', 'Idx_Sample'] if c in candidate_data.columns]
+                if identity_columns:
+                    candidate_inputs.attrs['identity_columns'] = candidate_data[identity_columns].copy()
                 results_df = evaluate_func(model, labeled_data, candidate_inputs, input_columns, target_columns, weights, max_or_min, curiosity)
             elif model_name == 'rl':
                 # RL uses same signature as lolopy
@@ -357,13 +360,16 @@ class MLEngine:
         uncertainties = np.zeros((len(results_df), len(target_columns)))
         
         for i, col in enumerate(target_columns):
-            if col in results_df.columns:
-                predictions[:, i] = results_df[col].values
+            predicted_col = f"Predicted_{col}"
+            if col in results_df.columns and pd.to_numeric(results_df[col], errors='coerce').notna().any():
+                predictions[:, i] = pd.to_numeric(results_df[col], errors='coerce').fillna(0.0).values
+            elif predicted_col in results_df.columns:
+                predictions[:, i] = pd.to_numeric(results_df[predicted_col], errors='coerce').fillna(0.0).values
             unc_col = f"Uncertainty ({col})"
             if unc_col in results_df.columns:
-                uncertainties[:, i] = results_df[unc_col].values
+                uncertainties[:, i] = pd.to_numeric(results_df[unc_col], errors='coerce').fillna(0.0).values
             elif 'Uncertainty' in results_df.columns:
-                uncertainties[:, i] = results_df['Uncertainty'].values
+                uncertainties[:, i] = pd.to_numeric(results_df['Uncertainty'], errors='coerce').fillna(0.0).values
         
         # Get acquisition function and compute
         acq_func = get_acquisition_function(acquisition_function)

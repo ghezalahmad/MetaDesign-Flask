@@ -1,0 +1,52 @@
+{
+  "id": "maml_experiment_20260524_223248",
+  "name": "maml_experiment",
+  "config": {
+    "model": "maml",
+    "acquisition": "ucb",
+    "curiosity": 1.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 138,
+    "utility_max": 2.592685189463923,
+    "utility_mean": 0.5226160489396697
+  },
+  "start_time": "2026-05-24T22:32:48.989990",
+  "end_time": "2026-05-24T22:32:50.589537",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 138,
+    "utility_mean": 0.5226160489396697,
+    "utility_max": 2.592685189463923,
+    "selected_sample": [
+      {
+        "Idx_Sample": 1528,
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 215,
+        "GGBFS (kg/m3)": 215,
+        "Coarse aggregate (kg/m3)": 967.96105,
+        "Fine aggregate (kg/m3)": 795.03895,
+        "Total aggregates": 1763.0,
+        "Na2SiO3": 153.57143,
+        "Na2O (Dry)": 17.66,
+        "Sio2 (Dry)": 46.07,
+        "Superplasticizer": 17.2,
+        "water -eff": 141.93071,
+        "Slump - Target (mm)": NaN,
+        "CO2 (kg/t) - A-priori Information": 145.76754,
+        "fc 28-d - Target (MPa)": 60.17013931274414,
+        "Row number": 94,
+        "Uncertainty (fc 28-d - Target (MPa))": 4.885859396891407,
+        "Utility": 2.592685189463923,
+        "Uncertainty": 4.885859396891407,
+        "Novelty": 0.25302663789400265,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

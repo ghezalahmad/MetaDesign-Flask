@@ -1,0 +1,52 @@
+{
+  "id": "reptile_experiment_20260524_223254",
+  "name": "reptile_experiment",
+  "config": {
+    "model": "reptile",
+    "acquisition": "ucb",
+    "curiosity": 1.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 138,
+    "utility_max": 1.744069230366707,
+    "utility_mean": -0.19477712315330814
+  },
+  "start_time": "2026-05-24T22:32:54.330475",
+  "end_time": "2026-05-24T22:32:56.234630",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 138,
+    "utility_mean": -0.19477712315330814,
+    "utility_max": 1.744069230366707,
+    "selected_sample": [
+      {
+        "Idx_Sample": 1528,
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 215,
+        "GGBFS (kg/m3)": 215,
+        "Coarse aggregate (kg/m3)": 967.96105,
+        "Fine aggregate (kg/m3)": 795.03895,
+        "Total aggregates": 1763.0,
+        "Na2SiO3": 153.57143,
+        "Na2O (Dry)": 17.66,
+        "Sio2 (Dry)": 46.07,
+        "Superplasticizer": 17.2,
+        "water -eff": 141.93071,
+        "Slump - Target (mm)": NaN,
+        "CO2 (kg/t) - A-priori Information": 145.76754,
+        "fc 28-d - Target (MPa)": 59.26668930053711,
+        "Row number": 94,
+        "Uncertainty (fc 28-d - Target (MPa))": 2.0391385303437715,
+        "Utility": 1.744069230366707,
+        "Uncertainty": 2.0391385303437715,
+        "Novelty": 0.25302663789400265,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

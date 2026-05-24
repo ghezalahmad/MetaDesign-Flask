@@ -212,6 +212,7 @@ class HybridEngine:
         logging.info("🔀 Running in HYBRID mode (ML + LLM)")
 
         batch_size = int(config.get('batch_size', 1))
+        acquisition = config.get('acquisition_function', 'webslamd')
 
         # 1. Run ML to get predictions and base utility (batch_size=1, we'll apply batch after fusion)
         ml_results_df = MLEngine.run_experiment(
@@ -220,6 +221,8 @@ class HybridEngine:
             input_columns,
             config.get('target_columns'),
             curiosity=float(config.get('curiosity', 0.5)),
+            apriori_config=config.get('apriori_columns'),
+            acquisition_function=acquisition,
             batch_size=1  # We apply batch selection after fusion
         )
 
@@ -374,4 +377,3 @@ class HybridEngine:
             )
         except Exception as e:
             logging.warning(f"⚠️ Could not record trajectory point: {e}")
-

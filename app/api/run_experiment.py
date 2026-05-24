@@ -8,6 +8,7 @@ import os
 import sys
 import logging
 import json
+import hashlib
 import numpy as np
 import pandas as pd
 from flask import Blueprint, request, jsonify, session
@@ -20,6 +21,18 @@ from app.utils.decision_analysis import DecisionAnalyzer
 
 run_experiment_bp = Blueprint('run_experiment', __name__)
 logger = logging.getLogger(__name__)
+
+
+def _build_tsne_cache_key(filepath, input_columns):
+    """Build a t-SNE cache key that changes with dataset content and feature space."""
+    if not filepath or not os.path.exists(filepath):
+        return None
+
+    mtime = os.path.getmtime(filepath)
+    feature_signature = hashlib.sha256(
+        json.dumps(input_columns or [], ensure_ascii=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{filepath}_{mtime}_inputs_{feature_signature}"
 
 
 def _build_tsne_graph_data(tsne_plot_df, input_columns, target_columns):
@@ -253,10 +266,7 @@ def run_experiment():
                      f"{tsne_df['is_train_data'].sum()} labelled, "
                      f"{(~tsne_df['is_train_data']).sum()} predicted")
         
-        tsne_cache_key = None
-        if filepath and os.path.exists(filepath):
-            mtime = os.path.getmtime(filepath)
-            tsne_cache_key = f"{filepath}_{mtime}"
+        tsne_cache_key = _build_tsne_cache_key(filepath, input_columns)
         
         tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns, cache_key=tsne_cache_key)
         

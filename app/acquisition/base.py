@@ -12,6 +12,59 @@ import numpy as np
 import pandas as pd
 
 
+def _exploration_weight(curiosity: float) -> float:
+    """Return a non-negative exploration weight from the UI curiosity value."""
+    try:
+        return max(0.0, float(curiosity))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _target_statistics(labeled_data: pd.DataFrame, target_columns: List[str]) -> tuple[pd.Series, pd.Series]:
+    labels_mean = labeled_data[target_columns].mean(skipna=True)
+    labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
+    return labels_mean, labels_std
+
+
+def _oriented_normalized_values(
+    values: np.ndarray,
+    labeled_data: pd.DataFrame,
+    target_columns: List[str],
+    max_or_min: List[str],
+    weights: np.ndarray,
+) -> np.ndarray:
+    """Normalize target values and orient every objective as maximize."""
+    labels_mean, labels_std = _target_statistics(labeled_data, target_columns)
+    arr = np.atleast_2d(values).astype(float)
+    output = np.zeros((arr.shape[0], len(target_columns)), dtype=float)
+
+    for i, col in enumerate(target_columns):
+        output[:, i] = (arr[:, i] - labels_mean.iloc[i]) / labels_std.iloc[i]
+        if max_or_min[i].lower() == "min":
+            output[:, i] *= -1
+        output[:, i] *= weights[i]
+
+    return output
+
+
+def _normalized_uncertainties(
+    uncertainties: np.ndarray,
+    labeled_data: pd.DataFrame,
+    target_columns: List[str],
+    weights: np.ndarray,
+) -> np.ndarray:
+    """Normalize uncertainties into the same target space as predictions."""
+    _, labels_std = _target_statistics(labeled_data, target_columns)
+    arr = np.atleast_2d(uncertainties).astype(float)
+    output = np.zeros((arr.shape[0], len(target_columns)), dtype=float)
+
+    for i, col in enumerate(target_columns):
+        output[:, i] = np.maximum(arr[:, i], 0.0) / labels_std.iloc[i]
+        output[:, i] *= abs(weights[i])
+
+    return output
+
+
 class AcquisitionFunction(ABC):
     """
     Abstract base class for acquisition functions.
@@ -82,36 +135,15 @@ class WEBSLAMD(AcquisitionFunction):
                 **kwargs) -> np.ndarray:
         """Compute WEBSLAMD utility scores."""
         
-        n_samples = predictions.shape[0]
-        n_targets = len(target_columns)
-        
-        # Get labeled data statistics
-        labels_mean = labeled_data[target_columns].mean(skipna=True)
-        labels_std = labeled_data[target_columns].std(skipna=True).replace(0, 1)
-        
-        preds_norm = np.zeros((n_samples, n_targets), dtype=float)
-        unc_norm = np.zeros((n_samples, n_targets), dtype=float)
-        
-        for i, col in enumerate(target_columns):
-            mean_val = labels_mean.iloc[i]
-            std_val = labels_std.iloc[i]
-            
-            # Z-score normalize prediction
-            preds_norm[:, i] = (predictions[:, i] - mean_val) / std_val
-            
-            # Invert for minimization targets
-            if max_or_min[i].lower() == "min":
-                preds_norm[:, i] *= -1
-            
-            # Apply weight
-            preds_norm[:, i] *= weights[i]
-            
-            # Normalize uncertainty (no z-scoring per WEBSLAMD spec)
-            unc_norm[:, i] = uncertainties[:, i] / std_val
-            unc_norm[:, i] *= weights[i]
+        preds_norm = _oriented_normalized_values(
+            predictions, labeled_data, target_columns, max_or_min, weights
+        )
+        unc_norm = _normalized_uncertainties(
+            uncertainties, labeled_data, target_columns, weights
+        )
         
         # WEBSLAMD formula
-        utility = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+        utility = preds_norm.sum(axis=1) + _exploration_weight(curiosity) * unc_norm.sum(axis=1)
         
         return utility
 
@@ -145,26 +177,14 @@ class UCB(AcquisitionFunction):
                 **kwargs) -> np.ndarray:
         """Compute UCB acquisition scores."""
         
-        # Use beta from init, but allow curiosity to modulate
-        effective_beta = self.beta * (1 + curiosity)
-        
-        n_samples = predictions.shape[0]
-        n_targets = len(target_columns)
-        
-        ucb_values = np.zeros((n_samples, n_targets), dtype=float)
-        
-        for i, col in enumerate(target_columns):
-            pred = predictions[:, i]
-            unc = uncertainties[:, i]
-            
-            # UCB formula
-            if max_or_min[i].lower() == "min":
-                # For minimization: lower is better, so negate
-                ucb = -(pred - effective_beta * unc)
-            else:
-                ucb = pred + effective_beta * unc
-            
-            ucb_values[:, i] = ucb * weights[i]
+        effective_beta = self.beta * _exploration_weight(curiosity)
+        preds_norm = _oriented_normalized_values(
+            predictions, labeled_data, target_columns, max_or_min, weights
+        )
+        unc_norm = _normalized_uncertainties(
+            uncertainties, labeled_data, target_columns, weights
+        )
+        ucb_values = preds_norm + effective_beta * unc_norm
         
         return ucb_values.sum(axis=1)
 
@@ -194,21 +214,28 @@ class ExpectedImprovement(AcquisitionFunction):
         n_samples = predictions.shape[0]
         n_targets = len(target_columns)
         
-        xi = 0.01 * (1 + curiosity)  # Exploration parameter
+        xi = 0.01 * (1 + _exploration_weight(curiosity))  # Exploration parameter
         
         ei_values = np.zeros((n_samples, n_targets), dtype=float)
+        preds_norm = _oriented_normalized_values(
+            predictions, labeled_data, target_columns, max_or_min, weights
+        )
+        unc_norm = _normalized_uncertainties(
+            uncertainties, labeled_data, target_columns, weights
+        )
+        labeled_norm = _oriented_normalized_values(
+            labeled_data[target_columns].values,
+            labeled_data,
+            target_columns,
+            max_or_min,
+            weights,
+        )
         
         for i, col in enumerate(target_columns):
-            pred = predictions[:, i]
-            unc = uncertainties[:, i] + 1e-10  # Avoid division by zero
-            
-            # Get best observed value
-            if max_or_min[i].lower() == "min":
-                f_best = labeled_data[col].min()
-                improvement = f_best - pred - xi
-            else:
-                f_best = labeled_data[col].max()
-                improvement = pred - f_best - xi
+            pred = preds_norm[:, i]
+            unc = unc_norm[:, i] + 1e-10  # Avoid division by zero
+            f_best = np.nanmax(labeled_norm[:, i])
+            improvement = pred - f_best - xi
             
             Z = improvement / unc
             ei = improvement * norm.cdf(Z) + unc * norm.pdf(Z)
@@ -238,20 +265,16 @@ class ThompsonSampling(AcquisitionFunction):
                 **kwargs) -> np.ndarray:
         """Compute Thompson Sampling scores."""
         
-        n_samples = predictions.shape[0]
-        n_targets = len(target_columns)
-        
-        # Draw samples from posterior (Gaussian approximation)
-        ts_values = np.zeros((n_samples, n_targets), dtype=float)
-        
-        for i, col in enumerate(target_columns):
-            # Sample from N(μ, σ²)
-            sampled = np.random.normal(predictions[:, i], uncertainties[:, i])
-            
-            if max_or_min[i].lower() == "min":
-                sampled = -sampled
-            
-            ts_values[:, i] = sampled * weights[i]
+        preds_norm = _oriented_normalized_values(
+            predictions, labeled_data, target_columns, max_or_min, weights
+        )
+        unc_norm = _normalized_uncertainties(
+            uncertainties, labeled_data, target_columns, weights
+        )
+        ts_values = np.random.normal(
+            preds_norm,
+            unc_norm * (1.0 + _exploration_weight(curiosity))
+        )
         
         return ts_values.sum(axis=1)
 

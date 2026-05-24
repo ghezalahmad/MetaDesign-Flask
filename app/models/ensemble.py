@@ -237,7 +237,7 @@ def weighted_uncertainty_ensemble(models, data, input_columns, target_columns,
         preds_norm[:, i] *= 1.0  # uniform weight
         unc_norm[:, i] = (ensemble_stds_broadcasted[:, i] if ensemble_stds_broadcasted.shape[1] > 1 else ensemble_stds) / std_val
     
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    utility_scores = preds_norm.sum(axis=1) + max(0.0, float(curiosity)) * unc_norm.sum(axis=1)
     result_df["Utility"] = utility_scores
     result_df["Uncertainty"] = ensemble_stds
 

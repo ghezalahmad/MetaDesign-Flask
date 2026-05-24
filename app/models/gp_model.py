@@ -161,6 +161,12 @@ def evaluate_gp_model(
 
     # 2. Build the results DataFrame
     candidate_df = candidate_inputs.copy()
+    identity = candidate_inputs.attrs.get("identity_columns")
+    if identity is not None:
+        for col in identity.columns:
+            candidate_df[col] = identity[col].reindex(candidate_inputs.index).values
+    elif "Row number" not in candidate_df.columns:
+        candidate_df["Row number"] = candidate_inputs.index.to_series().values + 1
     
     # 3. Assign predictions and uncertainty per target
     for i, col in enumerate(target_columns):

@@ -5,7 +5,7 @@ import pandas as pd
 from flask import Flask
 from unittest.mock import patch
 
-from app.api.run_experiment import run_experiment_bp
+from app.api.run_experiment import _build_tsne_cache_key, run_experiment_bp
 from app.utils.decision_analysis import DecisionAnalyzer
 
 
@@ -117,6 +117,19 @@ def test_decision_analyzer_applies_force_and_reject_after_any_engine_mode():
     assert analysis["oversight"]["force_rows"] == ["4"]
     assert analysis["oversight"]["reject_rows"] == ["2"]
     assert analysis["oversight"]["notes"] == "Manual lab override"
+
+
+def test_tsne_cache_key_changes_when_feature_space_changes(tmp_path):
+    dataset_path = tmp_path / "data.csv"
+    dataset_path.write_text("x1,x2,y\n1,2,3\n", encoding="utf-8")
+
+    key_x1 = _build_tsne_cache_key(str(dataset_path), ["x1"])
+    key_x2 = _build_tsne_cache_key(str(dataset_path), ["x2"])
+    key_x1_x2 = _build_tsne_cache_key(str(dataset_path), ["x1", "x2"])
+
+    assert key_x1 == _build_tsne_cache_key(str(dataset_path), ["x1"])
+    assert key_x1 != key_x2
+    assert key_x1 != key_x1_x2
 
 
 def test_run_experiment_route_applies_decision_layer_after_engine(tmp_path):

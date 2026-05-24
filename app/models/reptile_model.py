@@ -275,7 +275,7 @@ def evaluate_reptile(model, data, input_columns, target_columns, curiosity, weig
         unc_norm[:, i] = uncertainties[:, i] / std_val
         unc_norm[:, i] *= weights[i]
     
-    utility_scores = preds_norm.sum(axis=1) + curiosity * unc_norm.sum(axis=1)
+    utility_scores = preds_norm.sum(axis=1) + max(0.0, float(curiosity)) * unc_norm.sum(axis=1)
     candidate_df["Utility"] = utility_scores
     candidate_df["Uncertainty"] = np.mean(uncertainties, axis=1)
 
