@@ -1,6 +1,6 @@
 {
     "active_learning_mode": "ML_MODE",
-    "prompt_style": "parameter-format",
+    "prompt_style": "report-format",
     "hybrid_weights": {
         "w_llm": 0.4,
         "w_ml": 0.6

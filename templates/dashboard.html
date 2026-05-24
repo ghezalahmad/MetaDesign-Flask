@@ -553,7 +553,62 @@
             </div>
         </div>
 
+
+        <!-- ══ LLM Trace Panel (shown only for LLM / Hybrid modes) ══ -->
+        <div class="card mt-4 border-purple" id="llm-trace-panel" style="display:none; border-left: 4px solid #7c3aed;">
+            <div class="card-header d-flex align-items-center gap-2" style="background: linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%);">
+                <span style="font-size:1.3rem;">🧠</span>
+                <strong style="color:#5b21b6;">LLM Reasoning Trace</strong>
+                <span id="llm-trace-mode-badge" class="badge ms-2" style="background:#7c3aed;">LLM Agent</span>
+                <span id="llm-trace-model-badge" class="badge bg-secondary ms-1 font-monospace" style="font-size:0.7rem;"></span>
+            </div>
+            <div class="card-body">
+                <!-- Score summary row -->
+                <div class="row mb-3 g-2" id="llm-trace-scores">
+                    <!-- populated by JS -->
+                </div>
+
+                <!-- Prompt sent -->
+                <details class="mb-3">
+                    <summary class="fw-bold text-muted small" style="cursor:pointer;">
+                        📤 Prompt Sent to LLM <span class="text-muted fw-normal">(click to expand)</span>
+                    </summary>
+                    <pre id="llm-trace-prompt"
+                         class="mt-2 p-3 rounded small"
+                         style="background:#1e1e2e; color:#cdd6f4; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-break:break-word;"></pre>
+                </details>
+
+                <!-- Raw response -->
+                <details open class="mb-3">
+                    <summary class="fw-bold text-muted small" style="cursor:pointer;">
+                        📥 LLM Raw Response — <em>LLM's proposed/ideal values</em>
+                        <span class="text-muted fw-normal">(may differ from Results Table — see comparison below)</span>
+                    </summary>
+                    <pre id="llm-trace-response"
+                         class="mt-2 p-3 rounded small"
+                         style="background:#022c22; color:#6ee7b7; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-break:break-word;"></pre>
+                </details>
+
+                <!-- Proposed vs Actual comparison -->
+                <details open class="mb-3">
+                    <summary class="fw-bold small" style="cursor:pointer; color:#92400e;">
+                        🔍 Proposed vs. Actual — <em>Why values differ between the JSON and the Results Table</em>
+                    </summary>
+                    <p class="small text-muted mt-2 mb-2">
+                        The LLM proposes an <strong>ideal</strong> formulation (left column).
+                        Semantic matching then selects the <strong>closest real candidate</strong> from your dataset (right column).
+                        Differences are expected and highlighted below.
+                    </p>
+                    <div id="llm-trace-comparison"></div>
+                </details>
+
+                <!-- Footer note -->
+                <p class="text-muted small mb-0" id="llm-trace-footer"></p>
+            </div>
+        </div>
+
         <div class="card mt-4 mb-5">
+
             <div class="card-body">
                 <h5 class="card-title">
                     <a data-bs-toggle="collapse" href="#results-table-collapse" role="button" aria-expanded="true"

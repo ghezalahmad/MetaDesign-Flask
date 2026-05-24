@@ -1109,6 +1109,9 @@ document.addEventListener("DOMContentLoaded", () => {
                                         document.getElementById('stat-distance').textContent = (stats.total_distance || 0).toFixed(2);
                                     }
 
+                                    // Render LLM Trace panel (if present)
+                                    renderLlmTrace(data.llm_trace);
+
                                     console.log("✅ All plots rendered!");
 
                                     // Store new analysis plots for radio button handlers
@@ -1158,7 +1161,161 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // =========================================================
+    //  LLM TRACE PANEL
+    // =========================================================
+    function renderLlmTrace(trace) {
+        const panel = document.getElementById('llm-trace-panel');
+        if (!panel) return;
+
+        // Hide panel if no trace (ML-only mode)
+        if (!trace) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        panel.style.display = 'block';
+
+        // ── Mode & model badges ───────────────────────────────
+        const modeBadge = document.getElementById('llm-trace-mode-badge');
+        const modelBadge = document.getElementById('llm-trace-model-badge');
+        if (modeBadge) {
+            const isHybrid = trace.mode === 'HYBRID_MODE';
+            modeBadge.textContent = isHybrid ? '🟢 Hybrid (LLM + ML)' : '🟣 LLM Agent';
+            modeBadge.style.background = isHybrid ? '#059669' : '#7c3aed';
+        }
+        if (modelBadge) {
+            modelBadge.textContent = `${trace.provider || 'ollama'} / ${trace.model || 'mistral:latest'}`;
+        }
+
+        // ── Score / stats cards ───────────────────────────────
+        const scoresDiv = document.getElementById('llm-trace-scores');
+        if (scoresDiv) {
+            const fmt = v => (v !== null && v !== undefined) ? v : '—';
+            const cards = [
+                { label: 'Matched Candidate Index', value: fmt(trace.matched_index), color: '#7c3aed' },
+                { label: 'Semantic Score (TF-IDF)', value: fmt(trace.semantic_score), color: '#0891b2' },
+                { label: 'Labeled Samples', value: fmt(trace.n_labeled), color: '#059669' },
+                { label: 'Candidates Scored', value: fmt(trace.n_candidates), color: '#d97706' },
+            ];
+
+            // Add Hybrid-specific cards
+            if (trace.mode === 'HYBRID_MODE') {
+                cards.push({ label: 'ML Utility (top pick)', value: fmt(trace.ml_utility), color: '#1d4ed8' });
+                cards.push({ label: 'Fusion Weights (LLM+ML)', value: `${fmt(trace.w_llm)} + ${fmt(trace.w_ml)}`, color: '#9333ea' });
+            }
+
+            // Add LLM-only prediction cards
+            if (trace.mode === 'LLM_AGENT_MODE' && trace.predictions) {
+                Object.entries(trace.predictions).forEach(([k, v]) => {
+                    cards.push({ label: `LLM Predicted: ${k}`, value: fmt(v), color: '#be123c' });
+                });
+            }
+
+            scoresDiv.innerHTML = cards.map(c => `
+                <div class="col-auto">
+                    <div class="border rounded p-2 text-center" style="min-width:130px; border-color:${c.color} !important;">
+                        <div class="fw-bold" style="color:${c.color}; font-size:1.1rem;">${c.value}</div>
+                        <div class="text-muted" style="font-size:0.7rem; line-height:1.2;">${c.label}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // ── Prompt ────────────────────────────────────────────
+        const promptEl = document.getElementById('llm-trace-prompt');
+        if (promptEl) {
+            promptEl.textContent = trace.prompt || '(no prompt captured)';
+        }
+
+        // ── Raw response (LLM's proposed ideal values) ────────
+        const responseEl = document.getElementById('llm-trace-response');
+        if (responseEl) {
+            let responseText = trace.raw_response || '(no response captured)';
+            // Try to pretty-print if it looks like JSON
+            try {
+                const jsonStart = responseText.indexOf('{');
+                const jsonEnd = responseText.lastIndexOf('}');
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    const jsonPart = responseText.slice(jsonStart, jsonEnd + 1);
+                    const parsed = JSON.parse(jsonPart);
+                    responseText = responseText.slice(0, jsonStart)
+                        + JSON.stringify(parsed, null, 2)
+                        + responseText.slice(jsonEnd + 1);
+                }
+            } catch (_) { /* leave as-is */ }
+            responseEl.textContent = responseText;
+        }
+
+        // ── Proposed vs Actual comparison ────────────────────
+        const comparisonDiv = document.getElementById('llm-trace-comparison');
+        if (comparisonDiv) {
+            if (trace.matched_candidate_values) {
+                // Parse the LLM's proposed values from the raw JSON
+                let llmProposed = {};
+                try {
+                    const raw = trace.raw_response || '';
+                    const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+                    if (s >= 0 && e > s) llmProposed = JSON.parse(raw.slice(s, e + 1));
+                } catch (_) {}
+
+                const actual = trace.matched_candidate_values;
+                // Union of all keys from both dicts
+                const allKeys = [...new Set([...Object.keys(llmProposed), ...Object.keys(actual)])];
+
+                const rows = allKeys.map(k => {
+                    const proposed = llmProposed[k] !== undefined ? llmProposed[k] : '—';
+                    const act      = actual[k]      !== undefined ? actual[k]      : '—';
+                    const pNum = parseFloat(proposed);
+                    const aNum = parseFloat(act);
+                    const differ = !isNaN(pNum) && !isNaN(aNum)
+                        ? Math.abs(pNum - aNum) > 1e-4
+                        : String(proposed) !== String(act);
+                    const rowStyle  = differ ? 'background:#fff7ed;' : '';
+                    const propStyle = differ ? 'color:#c2410c; font-weight:600;' : '';
+                    const actStyle  = differ ? 'color:#15803d; font-weight:600;' : '';
+                    const badge     = differ
+                        ? '<span class="badge" style="background:#fdba74;color:#7c2d12;font-size:0.65rem;">differs</span>'
+                        : '<span class="badge bg-success" style="font-size:0.65rem;">match</span>';
+                    return `<tr style="${rowStyle}">
+                        <td class="small font-monospace" style="padding:3px 8px;">${k}</td>
+                        <td class="small" style="padding:3px 8px;${propStyle}">${proposed}</td>
+                        <td class="small" style="padding:3px 8px;${actStyle}">${act}</td>
+                        <td style="padding:3px 8px;">${badge}</td>
+                    </tr>`;
+                }).join('');
+
+                comparisonDiv.innerHTML = `
+                    <table class="table table-sm mb-0" style="font-size:0.82rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Feature</th>
+                                <th style="color:#c2410c;">🤖 LLM Proposed (ideal)</th>
+                                <th style="color:#15803d;">✅ Actual Matched (Results Table)</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>`;
+                comparisonDiv.closest('details').style.display = 'block';
+            } else {
+                comparisonDiv.closest('details').style.display = 'none';
+            }
+        }
+
+        // ── Footer ────────────────────────────────────────────
+        const footerEl = document.getElementById('llm-trace-footer');
+        if (footerEl) {
+            const strategy = trace.strategy || 'balanced';
+            footerEl.innerHTML = `Strategy: <strong>${strategy}</strong> · temperature=0 · `
+                + `<strong>Note:</strong> "LLM Proposed" values are the model's ideal suggestion. `
+                + `"Actual Matched" values are the nearest real candidate from your dataset — these will differ.`;
+        }
+    }
+
+
     // RENDER TABLE SEPARATELY
+
     function renderTable(tableHtml) {
         if (resultsDataTable) {
             resultsDataTable.destroy();

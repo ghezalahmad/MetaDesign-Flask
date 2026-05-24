@@ -226,6 +226,9 @@ def run_experiment():
         
         logger.info("Visualization generation complete")
 
+        # Extract LLM trace if present (set by HybridEngine for LLM/Hybrid modes)
+        llm_trace = results_df.attrs.get('llm_trace', None)
+
         response_data = {
             "success": True,
             "results_table": table_html,
@@ -239,7 +242,8 @@ def run_experiment():
             "distance_plot": distance_plot,
             "trajectory_summary": trajectory_summary,
             "feature_importance_plot": feature_importance_plot,
-            "prediction_actual_plot": prediction_actual_plot
+            "prediction_actual_plot": prediction_actual_plot,
+            "llm_trace": llm_trace,
         }
 
         try:
