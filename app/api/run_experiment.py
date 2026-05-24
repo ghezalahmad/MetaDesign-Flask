@@ -7,6 +7,7 @@ This is the core ML pipeline that trains models and returns predictions.
 import os
 import sys
 import logging
+import json
 import numpy as np
 import pandas as pd
 from flask import Blueprint, request, jsonify, session
@@ -15,9 +16,141 @@ from werkzeug.utils import secure_filename
 from app.utils.plot_generator import PlotGenerator
 from app.utils.settings_manager import SettingsManager
 from app.utils.trajectory_tracker import TrajectoryTracker
+from app.utils.decision_analysis import DecisionAnalyzer
 
 run_experiment_bp = Blueprint('run_experiment', __name__)
 logger = logging.getLogger(__name__)
+
+
+def _build_tsne_graph_data(tsne_plot_df, input_columns, target_columns):
+    """Return compact row data so the browser can redraw t-SNE parameter views."""
+    if tsne_plot_df is None or tsne_plot_df.empty:
+        return {
+            'rows': [],
+            'parameters': [],
+            'numeric_parameters': [],
+            'color_parameters': [],
+            'overlay_parameters': []
+        }
+
+    df = tsne_plot_df.copy()
+
+    if 'Row number' not in df.columns:
+        df['Row number'] = df.index + 1
+
+    df['TSNE_X'] = pd.to_numeric(df.get('tsne-2d-one', 0), errors='coerce').fillna(0.0)
+    df['TSNE_Y'] = pd.to_numeric(df.get('tsne-2d-two', 0), errors='coerce').fillna(0.0)
+
+    selected = df.get('Selected for Testing', pd.Series([False] * len(df), index=df.index))
+    if selected.dtype == object:
+        selected = selected.astype(str).str.lower().isin(['true', '1', 'yes'])
+    else:
+        selected = selected.fillna(False).astype(bool)
+
+    is_train = df.get('is_train_data', pd.Series([False] * len(df), index=df.index))
+    if is_train.dtype == object:
+        is_train = is_train.astype(str).str.lower().isin(['true', '1', 'yes'])
+    else:
+        is_train = is_train.fillna(False).astype(bool)
+
+    df['Population'] = np.where(
+        selected,
+        'Selected for Testing',
+        np.where(is_train, 'Labelled', 'Predicted')
+    )
+
+    preferred_columns = [
+        'Row number', 'TSNE_X', 'TSNE_Y', 'Population',
+        'Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score',
+        'Decision_Score', 'Pareto_Front', 'Constraint_Feasible', 'Trust_Score',
+        'Trust_Flag', 'OOD_Risk', 'Decision_Action', 'Fidelity_Level',
+        'Selected for Testing', 'is_train_data'
+    ]
+    preferred_columns.extend(input_columns or [])
+    preferred_columns.extend(target_columns or [])
+
+    export_columns = []
+    for col in preferred_columns:
+        if col in df.columns and col not in export_columns:
+            export_columns.append(col)
+
+    parameter_defs = []
+    numeric_parameters = []
+    categorical_parameters = []
+
+    for col in export_columns:
+        series = df[col]
+        is_numeric = pd.api.types.is_numeric_dtype(series)
+        unique_count = int(series.nunique(dropna=True))
+
+        if is_numeric:
+            numeric_parameters.append(col)
+            param_type = 'numeric'
+        elif unique_count <= 30:
+            categorical_parameters.append(col)
+            param_type = 'categorical'
+        else:
+            param_type = 'text'
+
+        parameter_defs.append({
+            'name': col,
+            'label': col,
+            'type': param_type,
+            'unique_count': unique_count
+        })
+
+    overlay_parameters = ['None']
+    overlay_parameters.extend([c for c in ['Population', 'Selected for Testing', 'is_train_data'] if c in export_columns])
+    overlay_parameters.extend([c for c in categorical_parameters if c not in overlay_parameters])
+
+    color_parameters = []
+    color_parameters.extend([c for c in ['Decision_Score', 'Utility', 'Trust_Score', 'Uncertainty', 'Population'] if c in export_columns])
+    color_parameters.extend([c for c in numeric_parameters if c not in color_parameters])
+    color_parameters.extend([c for c in categorical_parameters if c not in color_parameters])
+
+    export_df = df[export_columns].copy()
+    rows = json.loads(export_df.to_json(orient='records'))
+
+    return {
+        'rows': rows,
+        'parameters': parameter_defs,
+        'numeric_parameters': numeric_parameters,
+        'color_parameters': color_parameters,
+        'overlay_parameters': overlay_parameters,
+        'defaults': {
+            'x': 'TSNE_X',
+            'y': 'TSNE_Y',
+            'color': 'Utility' if 'Utility' in export_columns else 'Population',
+            'overlay': 'Population'
+        }
+    }
+
+
+def _merge_result_columns_into_tsne(tsne_df, results_df, columns):
+    """Merge result annotations into full t-SNE rows by row identity when possible."""
+    if tsne_df is None or tsne_df.empty or results_df is None or results_df.empty:
+        return tsne_df
+
+    key_column = None
+    for candidate in ['Row number', 'Idx_Sample', 'IDX_SAMPLE', 'idx_sample']:
+        if candidate in tsne_df.columns and candidate in results_df.columns:
+            key_column = candidate
+            break
+
+    if key_column:
+        tsne_keys = tsne_df[key_column].astype(str)
+        result_keys = results_df[key_column].astype(str)
+        for col in columns:
+            if col in results_df.columns:
+                mapping = pd.Series(results_df[col].values, index=result_keys).to_dict()
+                tsne_df[col] = tsne_keys.map(mapping)
+        return tsne_df
+
+    common_indices = tsne_df.index.intersection(results_df.index)
+    for col in columns:
+        if col in results_df.columns:
+            tsne_df.loc[common_indices, col] = results_df.loc[common_indices, col]
+    return tsne_df
 
 
 @run_experiment_bp.route('/run-experiment', methods=['POST'])
@@ -32,7 +165,7 @@ def run_experiment():
             upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
             filepath = os.path.join(upload_folder, secure_filename(dataset_filename))
             if not os.path.exists(filepath):
-                design_space_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'designspaces')
+                design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
                 filepath = os.path.join(design_space_dir, secure_filename(dataset_filename))
         else:
             filepath = session.get('filepath')
@@ -87,6 +220,17 @@ def run_experiment():
                 })
             return jsonify({'success': False, 'error': 'Model execution failed to produce results.'})
 
+        engine_attrs = dict(getattr(results_df, 'attrs', {}))
+        results_df, decision_analysis = DecisionAnalyzer.apply(
+            results_df=results_df,
+            source_df=data,
+            input_columns=input_columns,
+            target_configs=target_columns_config,
+            apriori_configs=apriori_config,
+            config=config
+        )
+        results_df.attrs.update(engine_attrs)
+
         # Ensure Utility and Uncertainty exist
         results_df['Utility'] = pd.to_numeric(results_df.get('Utility', 0), errors='coerce').fillna(0.0)
         
@@ -116,12 +260,12 @@ def run_experiment():
         
         tsne_df = PlotGenerator._run_tsne(tsne_df, input_columns, cache_key=tsne_cache_key)
         
-        cols_to_merge = ['Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score', 'Selected for Testing']
-        common_indices = tsne_df.index.intersection(results_df.index)
-        
-        for col in cols_to_merge:
-            if col in results_df.columns:
-                tsne_df.loc[common_indices, col] = results_df.loc[common_indices, col]
+        cols_to_merge = [
+            'Utility', 'Uncertainty', 'ML_Utility', 'Semantic_Score', 'Selected for Testing',
+            'Decision_Score', 'Pareto_Front', 'Constraint_Feasible', 'Trust_Score',
+            'Trust_Flag', 'OOD_Risk', 'Decision_Action', 'Fidelity_Level'
+        ]
+        tsne_df = _merge_result_columns_into_tsne(tsne_df, results_df, cols_to_merge)
 
         MAX_PLOT_POINTS = 2000
         if len(tsne_df) > MAX_PLOT_POINTS:
@@ -142,6 +286,7 @@ def run_experiment():
         logger.debug(f"Generating TSNE plot with {len(tsne_plot_df)} points")
         current_mode = SettingsManager.get_setting("active_learning_mode", "ML_MODE")
         tsne_figure = PlotGenerator.create_tsne_input_space_plot(tsne_plot_df, input_columns, mode=current_mode)
+        tsne_graph_data = _build_tsne_graph_data(tsne_plot_df, input_columns, target_columns)
 
         target_scatter_figure = PlotGenerator.create_target_scatter_plot(results_df, target_columns)
         uncertainty_plot = PlotGenerator.create_uncertainty_plot(results_df, target_columns)
@@ -169,8 +314,10 @@ def run_experiment():
         trajectory_plot = PlotGenerator.create_trajectory_plot(tsne_df, trajectory_summary, input_columns)
         distance_plot = PlotGenerator.create_distance_plot(trajectory_summary)
 
-        # Ensure results are sorted by Utility descending (SLAMD style)
-        if 'Utility' in results_df.columns:
+        # Ensure results are sorted by decision quality, then Utility descending
+        if 'Decision_Score' in results_df.columns:
+            results_df = results_df.sort_values(by='Decision_Score', ascending=False)
+        elif 'Utility' in results_df.columns:
             results_df = results_df.sort_values(by='Utility', ascending=False)
             
         if len(results_df) > 500:
@@ -227,12 +374,13 @@ def run_experiment():
         logger.info("Visualization generation complete")
 
         # Extract LLM trace if present (set by HybridEngine for LLM/Hybrid modes)
-        llm_trace = results_df.attrs.get('llm_trace', None)
+        llm_trace = engine_attrs.get('llm_trace') or results_df.attrs.get('llm_trace', None)
 
         response_data = {
             "success": True,
             "results_table": table_html,
             "tsne_figure": tsne_figure,
+            "tsne_graph_data": tsne_graph_data,
             "target_scatter_figure": target_scatter_figure,
             "uncertainty_plot": uncertainty_plot,
             "history_plot": history_plot, 
@@ -243,6 +391,7 @@ def run_experiment():
             "trajectory_summary": trajectory_summary,
             "feature_importance_plot": feature_importance_plot,
             "prediction_actual_plot": prediction_actual_plot,
+            "decision_analysis": decision_analysis,
             "llm_trace": llm_trace,
         }
 

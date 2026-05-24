@@ -319,6 +319,51 @@
         </div>
     </div>
 
+    <div class="card mt-4" id="decision-settings-panel">
+        <div class="card-body">
+            <h5 class="card-title"><i class="bi bi-sliders2"></i> Decision Intelligence</h5>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label" for="decision-cost-column">Cost Column</label>
+                    <select class="form-select" id="decision-cost-column">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="decision-fidelity-column">Fidelity Column</label>
+                    <select class="form-select" id="decision-fidelity-column">
+                        <option value="">Standard only</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="decision-force-rows">Force Include Rows</label>
+                    <input type="text" class="form-control" id="decision-force-rows" placeholder="Example: 1402, 1408">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="decision-reject-rows">Reject Rows</label>
+                    <input type="text" class="form-control" id="decision-reject-rows" placeholder="Example: 1410">
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label" for="decision-oversight-notes">Oversight Notes</label>
+                    <input type="text" class="form-control" id="decision-oversight-notes"
+                        placeholder="Reason for manual intervention or lab policy">
+                </div>
+                <div class="col-md-4">
+                    <div class="form-check mt-4">
+                        <input class="form-check-input" type="checkbox" id="decision-prefer-feasible" checked>
+                        <label class="form-check-label" for="decision-prefer-feasible">
+                            Prefer feasible candidates when thresholds are set
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <p class="text-muted small mb-0 mt-3">
+                Optional thresholds on target and a-priori rows become constraints. Force/reject rows are applied after
+                any ML, Hybrid, or LLM-only recommendation.
+            </p>
+        </div>
+    </div>
+
     <!-- Experiment History Panel -->
     <div class="card mt-4" id="experiment-history-panel">
         <div class="card-header">
@@ -443,7 +488,31 @@
             <div class="col-12">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h5 class="card-title">Design Space Visualization (t-SNE)</h5>
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+                            <h5 class="card-title mb-0">Design Space Visualization (t-SNE)</h5>
+                            <button class="btn btn-outline-secondary btn-sm" id="tsne-reset-view-button" type="button"
+                                title="Reset t-SNE view">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                        </div>
+                        <div class="row g-2 align-items-end mb-3" id="tsne-graph-controls" style="display:none;">
+                            <div class="col-md-3 col-sm-6">
+                                <label class="form-label small mb-1" for="tsne-x-param">X</label>
+                                <select class="form-select form-select-sm" id="tsne-x-param"></select>
+                            </div>
+                            <div class="col-md-3 col-sm-6">
+                                <label class="form-label small mb-1" for="tsne-y-param">Y</label>
+                                <select class="form-select form-select-sm" id="tsne-y-param"></select>
+                            </div>
+                            <div class="col-md-3 col-sm-6">
+                                <label class="form-label small mb-1" for="tsne-color-param">Color</label>
+                                <select class="form-select form-select-sm" id="tsne-color-param"></select>
+                            </div>
+                            <div class="col-md-3 col-sm-6">
+                                <label class="form-label small mb-1" for="tsne-overlay-param">Overlay</label>
+                                <select class="form-select form-select-sm" id="tsne-overlay-param"></select>
+                            </div>
+                        </div>
                         <div id="tsne-plot" style="width:100%; min-height:500px;"></div>
                     </div>
                 </div>
@@ -525,6 +594,46 @@
                             <div class="d-flex justify-content-between">
                                 <span>Total Distance:</span>
                                 <strong id="stat-distance">0.00</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title mb-0"><i class="bi bi-diagram-3"></i> Decision Intelligence</h5>
+                            <span class="badge bg-secondary" id="decision-mode-badge">Model agnostic</span>
+                        </div>
+                        <div class="row g-2 mb-3" id="decision-summary-cards"></div>
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <div id="pareto-plot" class="decision-plot"></div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="trust-plot" class="decision-plot"></div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="batch-plot" class="decision-plot"></div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="fidelity-plot" class="decision-plot"></div>
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-3">
+                            <div class="col-lg-7">
+                                <h6>Selected Batch</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped mb-0" id="decision-batch-table"></table>
+                                </div>
+                            </div>
+                            <div class="col-lg-5">
+                                <h6>Run Manifest</h6>
+                                <pre class="decision-manifest mb-0" id="decision-manifest"></pre>
                             </div>
                         </div>
                     </div>

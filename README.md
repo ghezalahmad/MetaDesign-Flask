@@ -21,6 +21,13 @@ This is a Flask-based version of the Meta-Design Dashboard, a tool for accelerat
     pip install -r requirements.txt
     ```
 
+4.  **Create local environment settings:**
+    ```bash
+    cp .env.example .env
+    ```
+
+    Replace `SECRET_KEY` in `.env` with a long random value before running the app.
+
 ## Running the Application
 
 1.  **Set the Flask application entry point:**

@@ -83,7 +83,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Existing Plot Divs
     const tsnePlotDiv = document.getElementById("tsne-plot");
+    const tsneGraphControls = document.getElementById("tsne-graph-controls");
+    const tsneXParamSelect = document.getElementById("tsne-x-param");
+    const tsneYParamSelect = document.getElementById("tsne-y-param");
+    const tsneColorParamSelect = document.getElementById("tsne-color-param");
+    const tsneOverlayParamSelect = document.getElementById("tsne-overlay-param");
+    const tsneResetViewButton = document.getElementById("tsne-reset-view-button");
     const scatterPlotDiv = document.getElementById("scatter-plot");
+    const decisionCostColumn = document.getElementById("decision-cost-column");
+    const decisionFidelityColumn = document.getElementById("decision-fidelity-column");
+    const decisionForceRows = document.getElementById("decision-force-rows");
+    const decisionRejectRows = document.getElementById("decision-reject-rows");
+    const decisionOversightNotes = document.getElementById("decision-oversight-notes");
+    const decisionPreferFeasible = document.getElementById("decision-prefer-feasible");
 
     // NEW Plot Divs
     const uncertaintyPlotDiv = document.getElementById("uncertainty-plot");
@@ -647,6 +659,7 @@ document.addEventListener("DOMContentLoaded", () => {
         targetContainer.innerHTML = '';
 
         populateInitialSelectors();
+        populateDecisionColumnSelectors();
     }
 
     function updateTableRowStyle(index, isActive) {
@@ -682,6 +695,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function populateInitialSelectors() {
         setSelectOptions(inputColumns, allColumns);
+    }
+
+    function populateDecisionColumnSelectors() {
+        const optionHtml = ['<option value="">None</option>']
+            .concat(allColumns.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`))
+            .join('');
+
+        if (decisionCostColumn) {
+            const current = decisionCostColumn.value;
+            decisionCostColumn.innerHTML = optionHtml;
+            if ([...decisionCostColumn.options].some(o => o.value === current)) {
+                decisionCostColumn.value = current;
+            }
+        }
+
+        if (decisionFidelityColumn) {
+            const current = decisionFidelityColumn.value;
+            decisionFidelityColumn.innerHTML = optionHtml.replace('>None<', '>Standard only<');
+            if ([...decisionFidelityColumn.options].some(o => o.value === current)) {
+                decisionFidelityColumn.value = current;
+            }
+        }
     }
 
     inputColumns.addEventListener("change", updateAvailableColumns);
@@ -750,6 +785,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     <option value="max">Maximize</option>
                     <option value="min">Minimize</option>
                 </select>
+                <input type="number" class="form-control" name="target_thresholds" step="0.01"
+                    placeholder="Threshold" title="Optional constraint threshold">
                 <button class="btn btn-danger" type="button">Remove</button>
             </div>
         `;
@@ -768,7 +805,8 @@ document.addEventListener("DOMContentLoaded", () => {
         return Array.from(document.querySelectorAll(".target-group")).map(g => ({
             name: g.querySelector("select[name='target_columns']").value,
             weight: parseFloat(g.querySelector("input[name='weights']").value),
-            optimization: g.querySelector("select[name='max_or_min']").value
+            optimization: g.querySelector("select[name='max_or_min']").value,
+            threshold: g.querySelector("input[name='target_thresholds']").value || null
         }));
     }
 
@@ -808,6 +846,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     <option value="max">Maximize</option>
                     <option value="min">Minimize</option>
                 </select>
+                <input type="number" class="form-control" name="apriori_thresholds" step="0.01"
+                    placeholder="Threshold" title="Optional constraint threshold">
                 <button class="btn btn-danger" type="button">Remove</button>
             </div>
         `;
@@ -823,8 +863,20 @@ document.addEventListener("DOMContentLoaded", () => {
         return Array.from(document.querySelectorAll(".apriori-group")).map(g => ({
             name: g.querySelector("select[name='apriori_columns']").value,
             weight: parseFloat(g.querySelector("input[name='apriori_weights']").value),
-            optimization: g.querySelector("select[name='apriori_max_or_min']").value
+            optimization: g.querySelector("select[name='apriori_max_or_min']").value,
+            threshold: g.querySelector("input[name='apriori_thresholds']").value || null
         }));
+    }
+
+    function collectDecisionSettings() {
+        return {
+            cost_column: decisionCostColumn?.value || null,
+            fidelity_column: decisionFidelityColumn?.value || null,
+            force_rows: decisionForceRows?.value || "",
+            reject_rows: decisionRejectRows?.value || "",
+            oversight_notes: decisionOversightNotes?.value || "",
+            prefer_feasible: decisionPreferFeasible ? decisionPreferFeasible.checked : true
+        };
     }
     // ==========================================================
 
@@ -911,7 +963,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const w_llm = parseFloat(document.getElementById('w_llm')?.value || 0.5);
         const w_ml = parseFloat(document.getElementById('w_ml')?.value || 0.5);
         const acquisitionFunc = document.getElementById('acquisition-select')?.value || 'webslamd';
-        const batchSize = parseInt(document.getElementById('batch-size-select')?.value || 1);
+        const batchSize = mode === 'LLM_AGENT_MODE'
+            ? parseInt(document.getElementById('llm-batch-size')?.value || 1)
+            : parseInt(document.getElementById('batch-size-select')?.value || 1);
+        const decisionSettings = collectDecisionSettings();
 
         const payload = {
             model: modelSelect.value,
@@ -924,7 +979,8 @@ document.addEventListener("DOMContentLoaded", () => {
             active_learning_mode: mode,
             prompt_style: promptStyle,
             hybrid_weights: { w_llm, w_ml },
-            batch_size: batchSize
+            batch_size: batchSize,
+            decision_settings: decisionSettings
         };
 
         // Store config for Excel export with metadata
@@ -1077,7 +1133,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Stage 4: Render TSNE plot
                 setTimeout(() => {
                     console.log("📊 Rendering TSNE plot...");
-                    drawPlot("tsne-plot", data.tsne_figure);
+                    setupTsneGraphWindow(data);
 
                     // Stage 5: Render remaining plots
                     setTimeout(() => {
@@ -1111,6 +1167,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                                     // Render LLM Trace panel (if present)
                                     renderLlmTrace(data.llm_trace);
+                                    renderDecisionIntelligence(data.decision_analysis);
 
                                     console.log("✅ All plots rendered!");
 
@@ -1130,6 +1187,217 @@ document.addEventListener("DOMContentLoaded", () => {
                 }, 200);
             }, 150);
         }, 100);
+    }
+
+    function setupTsneGraphWindow(data) {
+        const graphData = data?.tsne_graph_data;
+        if (!graphData || !Array.isArray(graphData.rows) || graphData.rows.length === 0) {
+            if (tsneGraphControls) tsneGraphControls.style.display = 'none';
+            drawPlot("tsne-plot", data?.tsne_figure);
+            return;
+        }
+
+        if (tsneGraphControls) tsneGraphControls.style.display = '';
+
+        populateTsneSelect(tsneXParamSelect, graphData.numeric_parameters, graphData.defaults?.x);
+        populateTsneSelect(tsneYParamSelect, graphData.numeric_parameters, graphData.defaults?.y);
+        populateTsneSelect(tsneColorParamSelect, graphData.color_parameters, graphData.defaults?.color);
+        populateTsneSelect(tsneOverlayParamSelect, graphData.overlay_parameters, graphData.defaults?.overlay);
+        applyTsneDefaults(graphData);
+
+        const redraw = () => renderTsneGraphWindow(data.tsne_figure);
+        [tsneXParamSelect, tsneYParamSelect, tsneColorParamSelect, tsneOverlayParamSelect].forEach(select => {
+            if (select) select.onchange = redraw;
+        });
+
+        if (tsneResetViewButton) {
+            tsneResetViewButton.onclick = () => {
+                applyTsneDefaults(graphData);
+                redraw();
+            };
+        }
+
+        redraw();
+    }
+
+    function populateTsneSelect(select, values = [], selectedValue = '') {
+        if (!select) return;
+
+        const uniqueValues = [...new Set((values || []).filter(value => value !== null && value !== undefined))];
+        select.innerHTML = uniqueValues.map(value => (
+            `<option value="${escapeHtml(String(value))}">${escapeHtml(String(value))}</option>`
+        )).join('');
+
+        setTsneSelectValue(select, selectedValue || uniqueValues[0]);
+    }
+
+    function setTsneSelectValue(select, value) {
+        if (!select || value === null || value === undefined) return;
+        const nextValue = String(value);
+        if ([...select.options].some(option => option.value === nextValue)) {
+            select.value = nextValue;
+        }
+    }
+
+    function applyTsneDefaults(graphData) {
+        const defaults = graphData?.defaults || {};
+        setTsneSelectValue(tsneXParamSelect, defaults.x || 'TSNE_X');
+        setTsneSelectValue(tsneYParamSelect, defaults.y || 'TSNE_Y');
+        setTsneSelectValue(tsneColorParamSelect, defaults.color || 'Utility');
+        setTsneSelectValue(tsneOverlayParamSelect, defaults.overlay || 'Population');
+
+        if (tsneXParamSelect?.value === tsneYParamSelect?.value) {
+            setTsneSelectValue(tsneXParamSelect, 'TSNE_X');
+            setTsneSelectValue(tsneYParamSelect, 'TSNE_Y');
+        }
+    }
+
+    function renderTsneGraphWindow(fallbackFigure) {
+        const graphData = experimentData?.tsne_graph_data;
+        if (!graphData || !Array.isArray(graphData.rows) || graphData.rows.length === 0) {
+            drawPlot("tsne-plot", fallbackFigure);
+            return;
+        }
+
+        const xParam = tsneXParamSelect?.value || graphData.defaults?.x || 'TSNE_X';
+        const yParam = tsneYParamSelect?.value || graphData.defaults?.y || 'TSNE_Y';
+        const colorParam = tsneColorParamSelect?.value || graphData.defaults?.color || 'Utility';
+        const overlayParam = tsneOverlayParamSelect?.value || graphData.defaults?.overlay || 'Population';
+        const figure = buildTsneGraphFigure(graphData, xParam, yParam, colorParam, overlayParam);
+
+        drawPlot("tsne-plot", figure);
+    }
+
+    function buildTsneGraphFigure(graphData, xParam, yParam, colorParam, overlayParam) {
+        const numericParams = new Set(graphData.numeric_parameters || []);
+        const rows = (graphData.rows || []).filter(row => isFiniteNumber(row[xParam]) && isFiniteNumber(row[yParam]));
+        const colorIsNumeric = numericParams.has(colorParam);
+        const overlayActive = overlayParam && overlayParam !== 'None';
+        const groupParam = overlayActive ? overlayParam : (colorIsNumeric ? null : colorParam);
+        const grouped = groupRows(rows, groupParam);
+        const orderedGroups = orderTsneGroups([...grouped.keys()]);
+        const palette = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#f59e0b', '#0891b2', '#be185d', '#64748b'];
+
+        const traces = orderedGroups.map((groupName, index) => {
+            const groupRowsForTrace = grouped.get(groupName) || [];
+            const marker = {
+                size: groupName === 'Selected for Testing' ? 13 : 8,
+                opacity: 0.86,
+                symbol: getTsneSymbol(groupName),
+                line: { color: 'rgba(17, 24, 39, 0.45)', width: 0.6 }
+            };
+
+            if (colorIsNumeric) {
+                marker.color = groupRowsForTrace.map(row => Number(row[colorParam] ?? 0));
+                marker.colorscale = 'Turbo';
+                marker.showscale = index === 0;
+                marker.colorbar = { title: colorParam };
+            } else {
+                marker.color = palette[index % palette.length];
+            }
+
+            return {
+                type: 'scattergl',
+                mode: 'markers',
+                name: groupParam ? groupName : colorParam,
+                x: groupRowsForTrace.map(row => Number(row[xParam])),
+                y: groupRowsForTrace.map(row => Number(row[yParam])),
+                marker,
+                customdata: groupRowsForTrace.map(row => [
+                    row['Row number'] ?? '',
+                    row[colorParam] ?? '',
+                    groupParam ? row[groupParam] ?? '' : '',
+                    row.Utility ?? ''
+                ]),
+                hovertemplate:
+                    'Row: %{customdata[0]}<br>' +
+                    `${escapePlotlyLabel(xParam)}: %{x:.3f}<br>` +
+                    `${escapePlotlyLabel(yParam)}: %{y:.3f}<br>` +
+                    `${escapePlotlyLabel(colorParam)}: %{customdata[1]}<br>` +
+                    (groupParam ? `${escapePlotlyLabel(groupParam)}: %{customdata[2]}<br>` : '') +
+                    'Utility: %{customdata[3]}<extra></extra>'
+            };
+        });
+
+        return {
+            data: traces,
+            layout: {
+                title: xParam === 'TSNE_X' && yParam === 'TSNE_Y'
+                    ? 'Embedded t-SNE Map'
+                    : `${xParam} vs ${yParam}`,
+                xaxis: {
+                    title: xParam,
+                    showgrid: xParam !== 'TSNE_X',
+                    zeroline: false
+                },
+                yaxis: {
+                    title: yParam,
+                    showgrid: yParam !== 'TSNE_Y',
+                    zeroline: false
+                },
+                plot_bgcolor: '#f8f7ff',
+                paper_bgcolor: '#f8f7ff',
+                margin: { l: 60, r: 40, t: 60, b: 60 },
+                height: 600,
+                legend: {
+                    yanchor: 'top',
+                    y: 0.99,
+                    xanchor: 'left',
+                    x: 0.01,
+                    bgcolor: 'rgba(248, 247, 255, 0.82)'
+                }
+            }
+        };
+    }
+
+    function groupRows(rows, groupParam) {
+        const groups = new Map();
+        rows.forEach(row => {
+            const key = groupParam ? formatTsneGroupValue(row[groupParam]) : 'All samples';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(row);
+        });
+        return groups;
+    }
+
+    function orderTsneGroups(groups) {
+        const preferred = ['Selected for Testing', 'Labelled', 'Predicted', 'All samples'];
+        return groups.sort((a, b) => {
+            const ai = preferred.indexOf(a);
+            const bi = preferred.indexOf(b);
+            if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+            return a.localeCompare(b);
+        });
+    }
+
+    function formatTsneGroupValue(value) {
+        if (value === null || value === undefined || value === '') return '(empty)';
+        if (value === true) return 'True';
+        if (value === false) return 'False';
+        return String(value);
+    }
+
+    function getTsneSymbol(groupName) {
+        if (groupName === 'Selected for Testing') return 'star';
+        if (groupName === 'Labelled' || groupName === 'True') return 'cross';
+        return 'circle';
+    }
+
+    function isFiniteNumber(value) {
+        return value !== null && value !== '' && Number.isFinite(Number(value));
+    }
+
+    function escapeHtml(value) {
+        return value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function escapePlotlyLabel(value) {
+        return String(value).replace(/%/g, '%%').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // Setup Model Analysis radio button event handlers
@@ -1159,6 +1427,105 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
         }
+    }
+
+    function renderDecisionIntelligence(analysis) {
+        const summaryCards = document.getElementById('decision-summary-cards');
+        if (!summaryCards) return;
+
+        if (!analysis) {
+            summaryCards.innerHTML = '<div class="col-12"><div class="alert alert-secondary mb-0">No decision analysis available.</div></div>';
+            return;
+        }
+
+        const summary = analysis.summary || {};
+        const cards = [
+            { label: 'Candidates', value: summary.candidate_count ?? 0, tone: 'primary' },
+            { label: 'Selected', value: summary.selected_count ?? 0, tone: 'success' },
+            { label: 'Pareto Front', value: summary.pareto_count ?? 0, tone: 'info' },
+            { label: 'Feasible', value: summary.feasible_count ?? 0, tone: 'success' },
+            { label: 'Low Trust', value: summary.low_trust_count ?? 0, tone: 'warning' },
+            { label: 'Mean Trust', value: summary.mean_trust ?? 0, tone: 'secondary' }
+        ];
+
+        summaryCards.innerHTML = cards.map(card => `
+            <div class="col-md-2 col-6">
+                <div class="decision-summary-card border-${card.tone}">
+                    <div class="decision-summary-value text-${card.tone}">${escapeHtml(String(card.value))}</div>
+                    <div class="decision-summary-label">${escapeHtml(card.label)}</div>
+                </div>
+            </div>
+        `).join('');
+
+        const modeBadge = document.getElementById('decision-mode-badge');
+        if (modeBadge && analysis.manifest) {
+            modeBadge.textContent = `${analysis.manifest.mode || 'ML_MODE'} / ${analysis.manifest.model || 'model'}`;
+        }
+
+        const plots = analysis.plots || {};
+        drawPlot('pareto-plot', plots.pareto);
+        drawPlot('trust-plot', plots.trust);
+        drawPlot('batch-plot', plots.batch);
+        drawPlot('fidelity-plot', plots.fidelity);
+
+        renderDecisionBatchTable(analysis.selected_batch || []);
+        renderDecisionManifest(analysis);
+    }
+
+    function renderDecisionBatchTable(rows) {
+        const table = document.getElementById('decision-batch-table');
+        if (!table) return;
+
+        if (!rows.length) {
+            table.innerHTML = '<tbody><tr><td class="text-muted">No selected samples.</td></tr></tbody>';
+            return;
+        }
+
+        const columns = Object.keys(rows[0]);
+        table.innerHTML = `
+            <thead>
+                <tr>${columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+                ${rows.map(row => `
+                    <tr>
+                        ${columns.map(col => `<td>${escapeHtml(formatDecisionValue(row[col]))}</td>`).join('')}
+                    </tr>
+                `).join('')}
+            </tbody>
+        `;
+    }
+
+    function renderDecisionManifest(analysis) {
+        const manifestEl = document.getElementById('decision-manifest');
+        if (!manifestEl) return;
+
+        const manifest = analysis.manifest || {};
+        const packageText = manifest.packages
+            ? Object.entries(manifest.packages).map(([name, version]) => `${name}: ${version}`).join('\n')
+            : '';
+        const oversight = analysis.oversight || {};
+        const fidelity = analysis.fidelity || {};
+
+        manifestEl.textContent = [
+            `Created: ${manifest.created_at || '-'}`,
+            `Dataset: ${manifest.dataset_filename || '-'}`,
+            `Rows: ${manifest.row_count ?? '-'}`,
+            `Batch size: ${manifest.batch_size ?? '-'}`,
+            `Cost column: ${fidelity.cost_column || 'none'}`,
+            `Fidelity column: ${fidelity.fidelity_column || 'standard'}`,
+            `Force rows: ${(oversight.force_rows || []).join(', ') || 'none'}`,
+            `Reject rows: ${(oversight.reject_rows || []).join(', ') || 'none'}`,
+            oversight.notes ? `Notes: ${oversight.notes}` : null,
+            '',
+            packageText
+        ].filter(line => line !== null).join('\n');
+    }
+
+    function formatDecisionValue(value) {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(3);
+        return String(value);
     }
 
     // =========================================================
@@ -1550,6 +1917,18 @@ document.addEventListener("DOMContentLoaded", () => {
                         `Weight: ${apriori.weight}, Optimization: ${apriori.optimization}`
                     ]);
                 });
+            }
+
+            if (lastExperimentConfig?.decision_settings) {
+                const d = lastExperimentConfig.decision_settings;
+                configData.push(["", ""]);
+                configData.push(["Decision Intelligence", ""]);
+                configData.push(["Cost Column", d.cost_column || "None"]);
+                configData.push(["Fidelity Column", d.fidelity_column || "Standard only"]);
+                configData.push(["Force Include Rows", d.force_rows || "None"]);
+                configData.push(["Reject Rows", d.reject_rows || "None"]);
+                configData.push(["Prefer Feasible", d.prefer_feasible ? "Yes" : "No"]);
+                if (d.oversight_notes) configData.push(["Oversight Notes", d.oversight_notes]);
             }
 
             // Add input columns
@@ -2069,7 +2448,11 @@ document.addEventListener("DOMContentLoaded", () => {
     //  RESPONSIVE RESIZING
     // ==========================================================
     window.addEventListener("resize", () => {
-        const plots = ["tsne-plot", "scatter-plot", "uncertainty-plot", "history-plot", "utility-surface-plot", "prediction-error-plot"];
+        const plots = [
+            "tsne-plot", "scatter-plot", "uncertainty-plot", "history-plot",
+            "utility-surface-plot", "prediction-error-plot", "pareto-plot",
+            "trust-plot", "batch-plot", "fidelity-plot"
+        ];
 
         plots.forEach(id => {
             const div = document.getElementById(id);

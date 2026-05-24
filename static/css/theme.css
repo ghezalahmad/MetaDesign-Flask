@@ -349,9 +349,63 @@ body {
 #utility-surface-plot,
 #trajectory-plot,
 #distance-plot,
+#pareto-plot,
+#trust-plot,
+#batch-plot,
+#fidelity-plot,
 #additional-plot-container {
     background: white;
     border-radius: 8px;
+}
+
+#tsne-graph-controls {
+    background: #f8f9fb;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+#tsne-graph-controls .form-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.decision-plot {
+    min-height: 360px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.decision-summary-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--bg-white);
+}
+
+.decision-summary-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.decision-summary-label {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.decision-manifest {
+    background: #f8f9fb;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    max-height: 260px;
+    overflow: auto;
+    padding: 12px;
+    white-space: pre-wrap;
 }
 
 /* Mode Colors - Consistent across app */
