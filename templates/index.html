@@ -8,32 +8,62 @@
 <main>
     <section class="hero">
         <div class="container">
-            <h1>Accelerate <span>Material Discovery</span> with AI</h1>
-            <p>Leverage state-of-the-art machine learning and LLM agents to design, predict, and optimize material
-                properties—drastically reducing R&amp;D time and cost.</p>
+            <h1>Closed-loop <span>Material Discovery</span></h1>
+            <p>Plan a campaign, generate a design space, select the next lab samples with active learning, record the
+                measured results, and sync them back into the dataset for the next cycle.</p>
             <a href="/dashboard" class="btn btn-gradient">
-                <i class="bi bi-rocket-takeoff"></i> Start Discovering
+                <i class="bi bi-rocket-takeoff"></i> Run Material Discovery
             </a>
+            <a href="/scenario" class="btn btn-outline ms-2">
+                <i class="bi bi-diagram-3"></i> Plan Scenario
+            </a>
+        </div>
+    </section>
+
+    <section class="workflow container" aria-label="Closed-loop workflow">
+        <div class="workflow-step">
+            <span class="workflow-number">1</span>
+            <h3>Scenario</h3>
+            <p>Define the campaign plan: cycles, samples per cycle, budget, timing, and success coverage.</p>
+            <a href="/scenario">Open Scenario</a>
+        </div>
+        <div class="workflow-step">
+            <span class="workflow-number">2</span>
+            <h3>Design Space</h3>
+            <p>Create or edit the candidate feature grid that the models will rank.</p>
+            <a href="/design-space">Build Design Space</a>
+        </div>
+        <div class="workflow-step">
+            <span class="workflow-number">3</span>
+            <h3>Material Discovery</h3>
+            <p>Choose inputs, targets, model, acquisition function, and exploration level to select samples.</p>
+            <a href="/dashboard">Run Selection</a>
+        </div>
+        <div class="workflow-step">
+            <span class="workflow-number">4</span>
+            <h3>Results</h3>
+            <p>Send selected samples to a project cycle, enter lab measurements, and sync values to the source CSV.</p>
+            <a href="/results">Track Results</a>
         </div>
     </section>
 
     <section class="features container">
         <div class="feature-card">
             <i class="bi bi-cpu" style="font-size: 3rem; color: var(--primary-color);"></i>
-            <h3>Intelligent Design</h3>
-            <p>Define your material feature space and let our AI generate an optimal experimental design using active
-                learning.</p>
+            <h3>Model-agnostic recommendations</h3>
+            <p>Use classic ML, hybrid ML+LLM, or LLM-only selection with the same decision layer and result workflow.</p>
         </div>
         <div class="feature-card">
             <i class="bi bi-lightning-charge" style="font-size: 3rem; color: var(--primary-color);"></i>
-            <h3>Rapid Prototyping</h3>
-            <p>Quickly iterate through candidate materials with predictive models like PINN, GP, and Random Forest.</p>
+            <h3>Explore and exploit</h3>
+            <p>Balance predicted performance with uncertainty using WEBSLAMD, UCB, Expected Improvement, or Thompson
+                Sampling.</p>
         </div>
         <div class="feature-card">
             <i class="bi bi-bullseye" style="font-size: 3rem; color: var(--primary-color);"></i>
-            <h3>Multi-Target Optimization</h3>
-            <p>Optimize for multiple properties simultaneously with WEBSLAMD utility and uncertainty-guided exploration.
-            </p>
+            <h3>Lab feedback loop</h3>
+            <p>Record measured target values on the Results page, sync them into the original dataset, then run the next
+                active-learning cycle.</p>
         </div>
     </section>
 </main>

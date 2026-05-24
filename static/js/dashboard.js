@@ -2656,8 +2656,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // Store dataset path for project creation
         const activeDataset = uploadedDatasets.find(d => d.isActive);
         if (activeDataset) {
-            // Construct full path from filename (datasets are stored in data/ directory)
-            currentDatasetPath = `data/${activeDataset.filename}`;
+            currentDatasetPath = activeDataset.isDesignSpace
+                ? `data/designspaces/${activeDataset.filename}`
+                : `data/${activeDataset.filename}`;
             console.log('📂 Current dataset path:', currentDatasetPath);
         }
 

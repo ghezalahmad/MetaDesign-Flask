@@ -7,6 +7,7 @@ for the active learning lab results workflow.
 
 import os
 import json
+import logging
 import pandas as pd
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
@@ -14,6 +15,110 @@ from werkzeug.utils import secure_filename
 from app.database import db, Project, Cycle, Sample
 
 results_bp = Blueprint('results', __name__, url_prefix='/api/results')
+logger = logging.getLogger(__name__)
+
+IDENTITY_COLUMNS = ['Idx_Sample', 'IDX_SAMPLE', 'idx_sample', 'IdxSample', 'Row number', 'row_number', 'Index', 'index']
+
+
+def _value_matches(series, value):
+    if value is None or value == '':
+        return pd.Series([False] * len(series), index=series.index)
+
+    numeric_series = pd.to_numeric(series, errors='coerce')
+    numeric_value = pd.to_numeric(pd.Series([value]), errors='coerce').iloc[0]
+    if pd.notna(numeric_value):
+        return numeric_series == numeric_value
+
+    return series.astype(str) == str(value)
+
+
+def _find_sample_row(df, sample):
+    """Find the original dataset row for a tracked sample."""
+    row_data = sample.get_row_data()
+
+    for col in IDENTITY_COLUMNS:
+        if col not in df.columns:
+            continue
+
+        candidate_values = []
+        if col in row_data:
+            candidate_values.append(row_data.get(col))
+        candidate_values.append(sample.idx_sample)
+
+        for value in candidate_values:
+            mask = _value_matches(df[col], value)
+            if mask.any():
+                return mask, col
+
+    row_number = row_data.get('Row number') or sample.idx_sample
+    try:
+        position = int(float(row_number)) - 1
+    except (TypeError, ValueError):
+        position = None
+
+    if position is not None and 0 <= position < len(df):
+        mask = pd.Series(False, index=df.index)
+        mask.iloc[position] = True
+        return mask, 'row position'
+
+    return None, None
+
+
+def _sync_sample_lab_results(sample):
+    """Write one sample's lab results back into its project CSV."""
+    cycle = db.session.get(Cycle, sample.cycle_id)
+    project = db.session.get(Project, cycle.project_id) if cycle else None
+
+    if not project or not project.dataset_path or not os.path.exists(project.dataset_path):
+        return {
+            'success': False,
+            'error': 'Dataset file not found',
+            'sample_id': sample.id
+        }
+
+    lab_results = sample.get_lab_results()
+    if not lab_results or not any(v is not None and v != '' for v in lab_results.values()):
+        return {
+            'success': False,
+            'error': 'No lab results to sync',
+            'sample_id': sample.id
+        }
+
+    df = pd.read_csv(project.dataset_path)
+    row_mask, match_column = _find_sample_row(df, sample)
+    if row_mask is None or not row_mask.any():
+        return {
+            'success': False,
+            'error': f'Sample {sample.idx_sample} not found in dataset',
+            'sample_id': sample.id
+        }
+
+    updated_columns = []
+    for col, value in lab_results.items():
+        if value is None or value == '':
+            continue
+        if col not in df.columns:
+            df[col] = pd.NA
+        df.loc[row_mask, col] = value
+        updated_columns.append(col)
+
+    if not updated_columns:
+        return {
+            'success': False,
+            'error': 'No non-empty lab result values to sync',
+            'sample_id': sample.id
+        }
+
+    df.to_csv(project.dataset_path, index=False)
+    sample.status = 'completed'
+
+    return {
+        'success': True,
+        'sample_id': sample.id,
+        'dataset_path': project.dataset_path,
+        'matched_by': match_column,
+        'updated_columns': updated_columns
+    }
 
 
 # ============================================================
@@ -203,57 +308,26 @@ def delete_sample(sample_id):
 def sync_sample_to_csv(sample_id):
     """Sync lab results back to the original CSV using IDX_SAMPLE."""
     sample = Sample.query.get_or_404(sample_id)
-    cycle = Cycle.query.get(sample.cycle_id)
-    project = Project.query.get(cycle.project_id)
-    
-    if not project.dataset_path or not os.path.exists(project.dataset_path):
-        return jsonify({'success': False, 'error': 'Dataset file not found'}), 404
-    
-    lab_results = sample.get_lab_results()
-    if not lab_results:
-        return jsonify({'success': False, 'error': 'No lab results to sync'}), 400
-    
+
     try:
-        # Load the CSV
-        df = pd.read_csv(project.dataset_path)
-        
-        # Find the row by IDX_SAMPLE - check multiple case variations
-        idx_col = None
-        for col in ['Idx_Sample', 'IDX_SAMPLE', 'idx_sample', 'IdxSample', 'Row number', 'row_number', 'Index', 'index']:
-            if col in df.columns:
-                idx_col = col
-                break
-        
-        if idx_col is None:
-            return jsonify({'success': False, 'error': 'No IDX_SAMPLE column found in dataset'}), 400
-        
-        # Find the row index
-        row_mask = df[idx_col] == sample.idx_sample
-        if not row_mask.any():
-            return jsonify({'success': False, 'error': f'IDX_SAMPLE {sample.idx_sample} not found in dataset'}), 404
-        
-        # Update the lab results columns
-        for col, value in lab_results.items():
-            if col in df.columns and value is not None and value != '':
-                df.loc[row_mask, col] = value
-        
-        # Save back to CSV
-        df.to_csv(project.dataset_path, index=False)
-        
-        # Update sample status
-        sample.status = 'completed'
+        sync_result = _sync_sample_lab_results(sample)
+        if not sync_result['success']:
+            status_code = 404 if sync_result['error'] == 'Dataset file not found' else 400
+            return jsonify(sync_result), status_code
+
         db.session.commit()
-        
+
         return jsonify({
             'success': True,
-            'message': f'Lab results synced to {project.dataset_path}'
+            'message': f"Lab results synced to {sync_result['dataset_path']}",
+            'matched_by': sync_result['matched_by'],
+            'updated_columns': sync_result['updated_columns']
         })
-        
+
     except FileNotFoundError:
         return jsonify({'success': False, 'error': 'Dataset file not found.'}), 404
     except Exception as e:
-        import logging
-        logging.exception("Error syncing sample to CSV")
+        logger.exception("Error syncing sample to CSV")
         return jsonify({'success': False, 'error': 'Failed to sync results. Please check the file format.'}), 500
 
 
@@ -274,39 +348,13 @@ def sync_batch_to_csv():
         if not sample:
             errors.append(f"Sample {sample_id} not found")
             continue
-        
-        # Get lab results
-        lab_results = sample.get_lab_results()
-        if not lab_results or not any(v for v in lab_results.values() if v):
-            continue
-        
-        cycle = Cycle.query.get(sample.cycle_id)
-        project = Project.query.get(cycle.project_id)
-        
-        if not project.dataset_path or not os.path.exists(project.dataset_path):
-            errors.append(f"Dataset not found for sample {sample_id}")
-            continue
-        
+
         try:
-            df = pd.read_csv(project.dataset_path)
-            
-            # Find IDX column - check multiple case variations
-            idx_col = None
-            for col in ['Idx_Sample', 'IDX_SAMPLE', 'idx_sample', 'IdxSample', 'Row number', 'row_number', 'Index']:
-                if col in df.columns:
-                    idx_col = col
-                    break
-            
-            if idx_col:
-                row_mask = df[idx_col] == sample.idx_sample
-                if row_mask.any():
-                    for col, value in lab_results.items():
-                        if col in df.columns and value is not None and value != '':
-                            df.loc[row_mask, col] = value
-                    
-                    df.to_csv(project.dataset_path, index=False)
-                    sample.status = 'completed'
-                    synced += 1
+            sync_result = _sync_sample_lab_results(sample)
+            if sync_result['success']:
+                synced += 1
+            elif sync_result['error'] != 'No lab results to sync':
+                errors.append(f"Sample {sample_id}: {sync_result['error']}")
         except Exception as e:
             errors.append(f"Error syncing sample {sample_id}: {str(e)}")
     

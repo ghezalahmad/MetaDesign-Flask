@@ -1246,6 +1246,28 @@
         "water -eff": 118.82571
       },
       "utility": 1.774562924505978
+    },
+    {
+      "iteration": 57,
+      "timestamp": "2026-05-24T22:56:15.481220",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 180.0,
+        "GGBFS (kg/m3)": 180.0,
+        "Coarse aggregate (kg/m3)": 1090.8,
+        "Fine aggregate (kg/m3)": 774.0,
+        "Total aggregates": 1864.8,
+        "Na2SiO3": 115.71429,
+        "Na2O (Dry)": 13.31,
+        "Sio2 (Dry)": 34.71,
+        "Superplasticizer": 14.4,
+        "water -eff": 107.80714
+      },
+      "utility": 1.1785350549159195
     }
   ]
 }

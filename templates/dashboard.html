@@ -10,6 +10,12 @@
 
 {% block content %}
 <div class="container-fluid mt-4">
+    <div class="alert alert-light border d-flex flex-wrap align-items-center gap-2">
+        <strong>Material Discovery cycle:</strong>
+        <span>Select inputs and targets, run an acquisition function, send chosen samples to Results, then rerun after
+            lab values are synced to the dataset.</span>
+        <a class="btn btn-sm btn-outline-primary ms-auto" href="/results">Open Results</a>
+    </div>
     <div class="card">
         <div class="card-body">
             <h5 class="card-title">CSV File Upload</h5>
@@ -733,6 +739,13 @@
 
                 <!-- Send to Results Section -->
                 <div class="mt-4 border-top pt-3" id="send-to-results-section" style="display: none;">
+                    <div class="mb-3">
+                        <h6 class="mb-1">Create a lab cycle from selected samples</h6>
+                        <p class="text-muted small mb-0">
+                            Click recommended rows, send them to Results, enter measured lab values there, sync the
+                            values to this dataset, then run the next active-learning cycle.
+                        </p>
+                    </div>
                     <div class="row align-items-end">
                         <div class="col-md-4">
                             <label class="form-label fw-bold">Select or Create Project</label>
@@ -756,7 +769,7 @@
                     <div class="mt-2">
                         <small class="text-muted">
                             <i class="bi bi-info-circle"></i> <strong>Click on table rows</strong> to select samples
-                            (highlighted in green), then send them to the Results page for lab testing.
+                            (highlighted in green). The selected rows become the next lab batch for the chosen project.
                         </small>
                     </div>
                 </div>

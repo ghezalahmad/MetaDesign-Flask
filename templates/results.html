@@ -37,8 +37,19 @@
     <!-- Header -->
     <div class="row mb-4">
         <div class="col-12">
-            <h2><i class="bi bi-clipboard-data"></i> Lab Results Tracker</h2>
-            <p class="text-muted">Track experimental cycles and record lab results</p>
+            <h2><i class="bi bi-clipboard-data"></i> Results and Lab Feedback</h2>
+            <p class="text-muted mb-2">
+                Review recommended samples by cycle, enter measured lab values, sync them to the source dataset, then
+                return to Material Discovery for the next active-learning run.
+            </p>
+            <div class="alert alert-light border d-flex flex-wrap gap-3 align-items-center mb-0">
+                <span><strong>1.</strong> Save lab values</span>
+                <span><strong>2.</strong> Sync to dataset CSV</span>
+                <span><strong>3.</strong> Run the next cycle from the updated dataset</span>
+                <a class="btn btn-sm btn-outline-primary ms-auto" href="/dashboard">
+                    <i class="bi bi-arrow-repeat"></i> Back to Material Discovery
+                </a>
+            </div>
         </div>
     </div>
 
@@ -63,7 +74,7 @@
                 </div>
                 <div class="col-md-4">
                     <div id="project-info" class="alert alert-info py-2 mb-0" style="display: none;">
-                        <strong>Dataset:</strong> <span id="dataset-path"></span>
+                        <strong>Sync target:</strong> <span id="dataset-path"></span>
                     </div>
                 </div>
             </div>
@@ -72,8 +83,8 @@
 
     <!-- Cycles Container -->
     <div id="cycles-container">
-        <div class="alert alert-secondary text-center">
-            <i class="bi bi-folder2-open"></i> Select a project to view cycles
+            <div class="alert alert-secondary text-center">
+            <i class="bi bi-folder2-open"></i> Select a project to view lab cycles
         </div>
     </div>
 
@@ -117,8 +128,8 @@
                 <span class="badge bg-secondary ms-2 sample-count"></span>
             </h6>
             <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-success sync-all-btn" title="Sync all to CSV">
-                    <i class="bi bi-cloud-upload"></i> Sync All
+                <button class="btn btn-outline-success sync-all-btn" title="Sync all saved lab values to the source CSV">
+                    <i class="bi bi-cloud-upload"></i> Sync all saved values
                 </button>
                 <button class="btn btn-outline-secondary" data-bs-toggle="collapse" title="Toggle">
                     <i class="bi bi-chevron-down"></i>
@@ -135,6 +146,7 @@
                         <span class="badge bg-info text-dark me-2">Uncertainty</span>
                         <span class="badge bg-warning text-dark me-2">Novelty</span>
                         <span class="badge bg-success text-white me-2">Utility</span>
+                        <span class="ms-2">Save values first, then sync them back to the dataset.</span>
                     </small>
                 </div>
                 <div class="table-responsive">
@@ -168,10 +180,10 @@
         <td class="lab-cells"></td>
         <td class="action-cells">
             <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-primary save-btn" title="Save">
+                <button class="btn btn-outline-primary save-btn" title="Save lab values">
                     <i class="bi bi-check-lg"></i>
                 </button>
-                <button class="btn btn-outline-success sync-btn" title="Sync to CSV">
+                <button class="btn btn-outline-success sync-btn" title="Sync saved values to source CSV">
                     <i class="bi bi-cloud-upload"></i>
                 </button>
                 <button class="btn btn-outline-danger delete-btn" title="Delete sample">

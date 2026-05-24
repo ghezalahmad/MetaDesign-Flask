@@ -2,7 +2,14 @@
 {% block content %}
 <div class="container mt-4">
     <h3>Design Space Builder</h3>
-    <p class="text-muted">Define features and their ranges to generate a design space CSV.</p>
+    <p class="text-muted">Define candidate features and target columns, then generate the CSV that Material Discovery
+        will rank.</p>
+    <div class="alert alert-light border d-flex flex-wrap align-items-center gap-2">
+        <strong>Closed-loop handoff:</strong>
+        <span>Design spaces open directly in Material Discovery. Synced lab values from Results are written back to the
+            same CSV so the next run trains on the updated measurements.</span>
+        <a class="btn btn-sm btn-outline-primary ms-auto" href="/dashboard">Open Material Discovery</a>
+    </div>
 
     <form id="design-space-form" action="/generate-design-space" method="POST">
         <div class="mb-3">

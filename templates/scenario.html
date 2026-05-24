@@ -91,6 +91,14 @@
 
 {% block content %}
 <div class="container-fluid mt-4">
+  <div class="alert alert-light border mb-3">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <strong>Closed-loop planning:</strong>
+      <span>Scenario defines cycle count, batch size, budget, and timing.</span>
+      <span class="text-muted">Next: generate a design space, run Material Discovery, then track lab results.</span>
+      <a class="btn btn-sm btn-outline-primary ms-auto" href="/design-space">Go to Design Space</a>
+    </div>
+  </div>
   <div class="row">
     <!-- Sidebar: Project List -->
     <div class="col-md-3 col-lg-2 project-sidebar">
