@@ -82,6 +82,7 @@ def test_decision_analyzer_adds_model_agnostic_columns_and_plots():
     assert int(results["Selected for Testing"].sum()) == 2
     assert analysis["summary"]["selected_count"] == 2
     assert set(analysis["plots"].keys()) == {"pareto", "trust", "batch", "fidelity"}
+    assert analysis["plots"]["batch"]["data"][0]["type"] == "scatter"
     assert analysis["fidelity"]["cost_column"] == "cost"
     json.dumps(analysis)
 

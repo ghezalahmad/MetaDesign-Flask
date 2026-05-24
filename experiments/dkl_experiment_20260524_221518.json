@@ -1,0 +1,48 @@
+{
+  "id": "dkl_experiment_20260524_221518",
+  "name": "dkl_experiment",
+  "config": {
+    "model": "dkl",
+    "acquisition": "webslamd",
+    "curiosity": 0.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 138,
+    "utility_max": 1.5908736052954038,
+    "utility_mean": -0.5877080613380237
+  },
+  "start_time": "2026-05-24T22:15:18.249182",
+  "end_time": "2026-05-24T22:15:20.083988",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 138,
+    "utility_mean": -0.5877080613380237,
+    "utility_max": 1.5908736052954038,
+    "selected_sample": [
+      {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 180,
+        "GGBFS (kg/m3)": 180,
+        "Coarse aggregate (kg/m3)": 1090.8446,
+        "Fine aggregate (kg/m3)": 773.9554,
+        "Total aggregates": 1864.8,
+        "Na2SiO3": 115.71429,
+        "Na2O (Dry)": 13.31,
+        "Sio2 (Dry)": 34.71,
+        "Superplasticizer": 14.4,
+        "water -eff": 107.80714,
+        "fc 28-d - Target (MPa)": 62.154068472002265,
+        "Uncertainty (fc 28-d - Target (MPa))": 1.732837510457375,
+        "Utility": 1.5908736052954038,
+        "Uncertainty": 1.732837510457375,
+        "Novelty": 0.19604652405453704,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}

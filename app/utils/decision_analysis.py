@@ -421,21 +421,44 @@ class DecisionAnalyzer:
     def _batch_plot(selected: pd.DataFrame) -> dict:
         if selected.empty:
             return {"data": [], "layout": {"title": "No selected batch"}}
-        labels = selected["Row number"].astype(str).tolist()
-        fig = go.Figure(go.Bar(
+        plot_df = selected.sort_values("Decision_Score", ascending=True)
+        labels = plot_df["Row number"].astype(str).tolist()
+        fig = go.Figure(go.Scatter(
             x=labels,
-            y=selected["Decision_Score"].tolist(),
-            marker={"color": selected["Trust_Score"].tolist(), "colorscale": "Cividis", "showscale": True},
-            customdata=selected[["Decision_Action", "Constraint_Feasible", "Trust_Flag"]].values.tolist(),
-            hovertemplate="Action: %{customdata[0]}<br>Feasible: %{customdata[1]}<br>Trust: %{customdata[2]}<extra></extra>",
+            y=plot_df["Decision_Score"].tolist(),
+            mode="lines+markers",
+            line={"color": "#94a3b8", "width": 2},
+            marker={
+                "size": 16,
+                "color": plot_df["Trust_Score"].tolist(),
+                "colorscale": "Cividis",
+                "showscale": True,
+                "colorbar": {"title": "Trust"},
+                "line": {"color": "#1f2937", "width": 0.8},
+            },
+            customdata=plot_df[["Decision_Action", "Constraint_Feasible", "Trust_Flag", "Utility"]].values.tolist(),
+            hovertemplate=(
+                "Row: %{x}<br>Decision: %{y:.3f}<br>Action: %{customdata[0]}<br>"
+                "Feasible: %{customdata[1]}<br>Trust: %{customdata[2]}<br>"
+                "Utility: %{customdata[3]:.3f}<extra></extra>"
+            ),
         ))
-        fig.update_layout(title="Selected Batch Recommendation", xaxis_title="Row", yaxis_title="Decision score", template="plotly_white", height=360)
+        fig.update_layout(
+            title="Selected Batch Recommendation",
+            xaxis_title="Row",
+            yaxis_title="Decision score",
+            xaxis={"type": "category"},
+            yaxis={"rangemode": "tozero"},
+            template="plotly_white",
+            height=360,
+        )
         return fig.to_dict()
 
     @staticmethod
     def _fidelity_plot(df: pd.DataFrame) -> dict:
         if df.empty:
             return {"data": [], "layout": {"title": "No fidelity data available"}}
+        has_real_cost = df["Experiment_Cost"].nunique(dropna=True) > 1
         fig = go.Figure(go.Scatter(
             x=df["Experiment_Cost"].tolist(),
             y=df["Decision_Score"].tolist(),
@@ -451,6 +474,16 @@ class DecisionAnalyzer:
             customdata=df[["Row number", "Fidelity_Level", "Experiment_Cost"]].values.tolist(),
             hovertemplate="Row: %{customdata[0]}<br>Fidelity: %{customdata[1]}<br>Cost: %{customdata[2]}<extra></extra>",
         ))
+        if not has_real_cost:
+            fig.add_annotation(
+                text="No cost column selected; cost defaults to 1",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=1.08,
+                showarrow=False,
+                font={"color": "#64748b", "size": 12},
+            )
         fig.update_layout(title="Cost and Fidelity Awareness", xaxis_title="Experiment cost", yaxis_title="Decision score", template="plotly_white", height=360)
         return fig.to_dict()
 

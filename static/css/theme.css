@@ -408,6 +408,18 @@ body {
     white-space: pre-wrap;
 }
 
+.decision-batch-table th,
+.decision-batch-table td {
+    font-size: 0.78rem;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.decision-batch-table th {
+    color: var(--text-secondary);
+    letter-spacing: 0;
+}
+
 /* Mode Colors - Consistent across app */
 .mode-ml {
     color: #0077B6;

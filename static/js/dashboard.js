@@ -1476,20 +1476,37 @@ document.addEventListener("DOMContentLoaded", () => {
         const table = document.getElementById('decision-batch-table');
         if (!table) return;
 
+        table.classList.add('decision-batch-table');
+
         if (!rows.length) {
             table.innerHTML = '<tbody><tr><td class="text-muted">No selected samples.</td></tr></tbody>';
             return;
         }
 
-        const columns = Object.keys(rows[0]);
+        const preferredColumns = [
+            ['Row number', 'Row'],
+            ['Idx_Sample', 'Idx'],
+            ['Decision_Action', 'Action'],
+            ['Decision_Score', 'Decision'],
+            ['Utility', 'Utility'],
+            ['Experiment_Cost', 'Cost'],
+            ['Fidelity_Level', 'Fidelity'],
+            ['Trust_Flag', 'Trust'],
+            ['OOD_Risk', 'OOD'],
+            ['Pareto_Front', 'Pareto'],
+            ['Constraint_Feasible', 'Feasible']
+        ];
+        const availableKeys = new Set(Object.keys(rows[0]));
+        const columns = preferredColumns.filter(([key]) => availableKeys.has(key));
+
         table.innerHTML = `
             <thead>
-                <tr>${columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}</tr>
+                <tr>${columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join('')}</tr>
             </thead>
             <tbody>
                 ${rows.map(row => `
                     <tr>
-                        ${columns.map(col => `<td>${escapeHtml(formatDecisionValue(row[col]))}</td>`).join('')}
+                        ${columns.map(([key]) => `<td>${escapeHtml(formatDecisionValue(row[key]))}</td>`).join('')}
                     </tr>
                 `).join('')}
             </tbody>

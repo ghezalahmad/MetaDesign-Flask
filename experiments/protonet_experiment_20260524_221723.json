@@ -1,0 +1,52 @@
+{
+  "id": "protonet_experiment_20260524_221723",
+  "name": "protonet_experiment",
+  "config": {
+    "model": "protonet",
+    "acquisition": "webslamd",
+    "curiosity": 0.0,
+    "num_features": 13,
+    "num_targets": 1
+  },
+  "tags": [],
+  "metrics": {
+    "num_candidates": 138,
+    "utility_max": 2.219320297241211,
+    "utility_mean": 1.3639856728090756
+  },
+  "start_time": "2026-05-24T22:17:23.986230",
+  "end_time": "2026-05-24T22:17:25.041220",
+  "status": "completed",
+  "results_summary": {
+    "num_candidates": 138,
+    "utility_mean": 1.3639856728090756,
+    "utility_max": 2.219320297241211,
+    "selected_sample": [
+      {
+        "Idx_Sample": 1532,
+        "SiO2": 52.295,
+        "CaO": 12.58,
+        "SO3": 0.27,
+        "FA (kg/m3)": 259,
+        "GGBFS (kg/m3)": 111,
+        "Coarse aggregate (kg/m3)": 1081.5584,
+        "Fine aggregate (kg/m3)": 775.84155,
+        "Total aggregates": 1857.4,
+        "Na2SiO3": 145.35714,
+        "Na2O (Dry)": 16.72,
+        "Sio2 (Dry)": 43.61,
+        "Superplasticizer": 14.8,
+        "water -eff": 133.45107,
+        "Slump - Target (mm)": NaN,
+        "CO2 (kg/t) - A-priori Information": 131.50603,
+        "fc 28-d - Target (MPa)": 67.0394287109375,
+        "Row number": 98,
+        "Uncertainty (fc 28-d - Target (MPa))": 3.942135127186776,
+        "Utility": 2.219320297241211,
+        "Uncertainty": 3.942135127186776,
+        "Novelty": 0.4016146684324816,
+        "Selected for Testing": true
+      }
+    ]
+  }
+}
