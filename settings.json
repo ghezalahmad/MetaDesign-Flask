@@ -15,7 +15,7 @@
     "mlflow_enabled": true,
     "mlflow_tracking_uri": "",
     "mlflow_experiment_name": "MetaDesign",
-    "current_dataset": "MaterialsDiscoveryExampleData_1.csv",
+    "current_dataset": "MaterialsDiscoveryExampleData.csv",
     "current_dataset_columns": [
         "Idx_Sample",
         "SiO2",

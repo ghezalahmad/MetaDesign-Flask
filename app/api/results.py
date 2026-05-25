@@ -7,17 +7,26 @@ for the active learning lab results workflow.
 
 import os
 import json
+import hashlib
 import logging
+import numpy as np
 import pandas as pd
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 
 from app.database import db, Project, Cycle, Sample
+from app.utils.plot_generator import PlotGenerator
 
 results_bp = Blueprint('results', __name__, url_prefix='/api/results')
 logger = logging.getLogger(__name__)
 
 IDENTITY_COLUMNS = ['Idx_Sample', 'IDX_SAMPLE', 'idx_sample', 'IdxSample', 'Row number', 'row_number', 'Index', 'index']
+TSNE_EXCLUDE_HINTS = {
+    'utility', 'novelty', 'uncertainty', 'decision_score', 'trust_score',
+    'ood_risk', 'pareto_rank', 'constraint_count', 'cost_penalty',
+    'selected_for_lab', 'cycle_number', 'result_sample_id', 'cost'
+}
+TSNE_TARGET_HINTS = ['target', 'strength', 'slump', 'mpa', 'measured_', 'prediction_error_']
 
 
 def _value_matches(series, value):
@@ -121,6 +130,252 @@ def _sync_sample_lab_results(sample):
     }
 
 
+def _request_float(name, default, min_value=None, max_value=None):
+    value = request.args.get(name, default)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _request_int(name, default, min_value=None, max_value=None):
+    return int(_request_float(name, default, min_value, max_value))
+
+
+def _get_requested_feature_columns(df):
+    raw_values = request.args.getlist('input_columns')
+    if not raw_values and request.args.get('input_columns'):
+        raw_values = request.args.get('input_columns', '').split(',')
+    requested = [c.strip() for c in raw_values if c and c.strip()]
+    if requested:
+        return [c for c in requested if c in df.columns]
+    return _infer_tsne_feature_columns(df)
+
+
+def _infer_tsne_feature_columns(df):
+    """Pick likely material/design-space features for t-SNE."""
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    features = []
+    for col in numeric_cols:
+        normalized = col.lower()
+        if pd.api.types.is_bool_dtype(df[col]):
+            continue
+        if col in IDENTITY_COLUMNS or normalized in TSNE_EXCLUDE_HINTS:
+            continue
+        if any(hint in normalized for hint in TSNE_TARGET_HINTS):
+            continue
+        if normalized.startswith('predicted_') or 'uncertainty' in normalized:
+            continue
+        if normalized.startswith('lab_') or normalized.startswith('measured_') or normalized.startswith('prediction_error_'):
+            continue
+        features.append(col)
+    return features[:20]
+
+
+def _collect_lab_result_columns(project):
+    columns = []
+    for cycle in project.cycles:
+        for col in cycle.get_lab_result_columns():
+            if col and col not in columns:
+                columns.append(col)
+    return columns
+
+
+def _annotate_results_tsne_rows(df, project, lab_result_columns):
+    df = df.copy()
+    if 'Row number' not in df.columns:
+        df['Row number'] = range(1, len(df) + 1)
+
+    df['Cycle_Number'] = pd.NA
+    df['Cycle_Label'] = 'Not selected'
+    df['Lab_Status'] = 'Untested'
+    df['Result_Sample_ID'] = pd.NA
+    df['Selected_For_Lab'] = False
+
+    for col in lab_result_columns:
+        measured_col = f'Measured_{col}'
+        if measured_col not in df.columns:
+            df[measured_col] = pd.NA
+
+    for cycle in sorted(project.cycles, key=lambda c: c.cycle_number):
+        for sample in cycle.samples:
+            row_mask, _ = _find_sample_row(df, sample)
+            if row_mask is None or not row_mask.any():
+                continue
+
+            df.loc[row_mask, 'Cycle_Number'] = cycle.cycle_number
+            df.loc[row_mask, 'Cycle_Label'] = f'Cycle {cycle.cycle_number}'
+            df.loc[row_mask, 'Lab_Status'] = sample.status
+            df.loc[row_mask, 'Result_Sample_ID'] = sample.id
+            df.loc[row_mask, 'Selected_For_Lab'] = True
+
+            lab_results = sample.get_lab_results()
+            predictions = sample.get_predictions()
+            for col, value in lab_results.items():
+                if value is None or value == '':
+                    continue
+                if col not in df.columns:
+                    df[col] = pd.NA
+                df.loc[row_mask, col] = value
+                measured_col = f'Measured_{col}'
+                df.loc[row_mask, measured_col] = value
+
+                predicted_value = predictions.get(f'Predicted_{col}')
+                if predicted_value is not None and predicted_value != '':
+                    try:
+                        error_col = f'Prediction_Error_{col}'
+                        df[error_col] = pd.to_numeric(df.get(error_col, pd.NA), errors='coerce')
+                        df.loc[row_mask, error_col] = float(value) - float(predicted_value)
+                    except (TypeError, ValueError):
+                        logger.debug("Skipping non-numeric prediction error for %s", col)
+
+            for key, value in predictions.items():
+                if key not in df.columns and value is not None and value != '':
+                    df[key] = pd.NA
+                if key in df.columns:
+                    df.loc[row_mask, key] = value
+
+    return df
+
+
+def _build_tsne_quality_warnings(df, feature_columns):
+    warnings = []
+    missing_features = [c for c in feature_columns if c not in df.columns]
+    if missing_features:
+        warnings.append(f"Missing t-SNE feature columns were ignored: {', '.join(missing_features)}")
+
+    valid_features = [c for c in feature_columns if c in df.columns]
+    if not valid_features:
+        warnings.append("No numeric feature columns are available for t-SNE.")
+        return warnings
+
+    feature_df = df[valid_features].apply(pd.to_numeric, errors='coerce')
+    constant_cols = [c for c in valid_features if feature_df[c].nunique(dropna=True) <= 1]
+    if constant_cols:
+        warnings.append(f"Constant columns do not help t-SNE: {', '.join(constant_cols[:8])}")
+
+    sparse_cols = [c for c in valid_features if feature_df[c].isna().mean() > 0.3]
+    if sparse_cols:
+        warnings.append(f"Columns with more than 30% missing values may add noise: {', '.join(sparse_cols[:8])}")
+
+    duplicate_count = int(feature_df.fillna(0).duplicated().sum())
+    if duplicate_count:
+        warnings.append(f"{duplicate_count} rows have duplicate t-SNE feature values.")
+
+    if len(df) > 2000:
+        warnings.append("Large datasets can make t-SNE slow. Consider a representative subset if interaction feels heavy.")
+
+    return warnings
+
+
+def _build_results_tsne_cache_key(project, feature_columns, options):
+    if not project.dataset_path or not os.path.exists(project.dataset_path):
+        return None
+
+    signature = {
+        'path': project.dataset_path,
+        'mtime': os.path.getmtime(project.dataset_path),
+        'features': feature_columns,
+        'options': options,
+        'version': 'results-tsne-v1'
+    }
+    digest = hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=True).encode('utf-8')).hexdigest()[:16]
+    return f"{project.dataset_path}_results_tsne_{digest}"
+
+
+def _downsample_results_tsne_df(df, max_points, random_seed):
+    if len(df) <= max_points:
+        return df, None
+
+    selected = df[df.get('Selected_For_Lab', False) == True]
+    remaining = df.drop(index=selected.index, errors='ignore')
+    sample_size = max(0, int(max_points) - len(selected))
+    if sample_size > 0 and len(remaining) > sample_size:
+        remaining = remaining.sample(n=sample_size, random_state=int(random_seed))
+
+    sampled = pd.concat([selected, remaining]).sort_index()
+    warning = (
+        f"t-SNE was computed on {len(sampled)} of {len(df)} rows for responsiveness. "
+        "All selected lab samples were kept."
+    )
+    return sampled, warning
+
+
+def _build_results_tsne_payload(df, feature_columns, lab_result_columns, warnings, options):
+    df = df.copy()
+    df['TSNE_X'] = pd.to_numeric(df.get('tsne-2d-one', 0), errors='coerce').fillna(0.0)
+    df['TSNE_Y'] = pd.to_numeric(df.get('tsne-2d-two', 0), errors='coerce').fillna(0.0)
+
+    preferred = [
+        'Row number', 'Idx_Sample', 'TSNE_X', 'TSNE_Y', 'Cycle_Number', 'Cycle_Label',
+        'Lab_Status', 'Selected_For_Lab', 'Result_Sample_ID'
+    ]
+    for col in lab_result_columns:
+        preferred.extend([col, f'Measured_{col}', f'Predicted_{col}', f'Prediction_Error_{col}'])
+    preferred.extend(feature_columns)
+
+    export_columns = []
+    for col in preferred:
+        if col in df.columns and col not in export_columns:
+            export_columns.append(col)
+
+    numeric_parameters = []
+    categorical_parameters = []
+    for col in export_columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            numeric_parameters.append(col)
+        elif df[col].nunique(dropna=True) <= 40:
+            categorical_parameters.append(col)
+
+    color_parameters = []
+    for col in numeric_parameters + categorical_parameters:
+        if col not in color_parameters and col not in {'TSNE_X', 'TSNE_Y'}:
+            color_parameters.append(col)
+
+    overlay_parameters = ['None']
+    for col in ['Lab_Status', 'Cycle_Label', 'Selected_For_Lab']:
+        if col in export_columns:
+            overlay_parameters.append(col)
+
+    default_color = None
+    for col in lab_result_columns:
+        if f'Prediction_Error_{col}' in export_columns:
+            default_color = f'Prediction_Error_{col}'
+            break
+        if f'Measured_{col}' in export_columns:
+            default_color = f'Measured_{col}'
+            break
+        if col in export_columns:
+            default_color = col
+            break
+    if default_color is None:
+        default_color = 'Cycle_Number' if 'Cycle_Number' in export_columns else color_parameters[0] if color_parameters else 'Lab_Status'
+
+    rows = json.loads(df[export_columns].to_json(orient='records'))
+    return {
+        'rows': rows,
+        'feature_columns': feature_columns,
+        'feature_candidates': _infer_tsne_feature_columns(df),
+        'lab_result_columns': lab_result_columns,
+        'numeric_parameters': numeric_parameters,
+        'color_parameters': color_parameters,
+        'overlay_parameters': overlay_parameters,
+        'warnings': warnings,
+        'options': options,
+        'defaults': {
+            'x': 'TSNE_X',
+            'y': 'TSNE_Y',
+            'color': default_color,
+            'overlay': 'Lab_Status'
+        }
+    }
+
+
 # ============================================================
 # Project Endpoints
 # ============================================================
@@ -173,6 +428,57 @@ def get_project(project_id):
         'success': True,
         'project': data
     })
+
+
+@results_bp.route('/projects/<int:project_id>/tsne', methods=['GET'])
+def get_project_tsne(project_id):
+    """Return a project-level t-SNE map with cycle and lab-result overlays."""
+    project = Project.query.get_or_404(project_id)
+
+    if not project.dataset_path or not os.path.exists(project.dataset_path):
+        return jsonify({'success': False, 'error': 'Dataset file not found for this project.'}), 404
+
+    try:
+        df = pd.read_csv(project.dataset_path)
+    except Exception:
+        logger.exception("Could not read project dataset for results t-SNE")
+        return jsonify({'success': False, 'error': 'Could not read the project dataset.'}), 400
+
+    lab_result_columns = _collect_lab_result_columns(project)
+    df = _annotate_results_tsne_rows(df, project, lab_result_columns)
+    feature_columns = _get_requested_feature_columns(df)
+
+    options = {
+        'perplexity': _request_float('perplexity', min(20, max(2, len(df) - 1)), 2, max(2, len(df) - 1)),
+        'iterations': _request_int('iterations', 350, 300, 3000),
+        'learning_rate': _request_float('learning_rate', 100, 2, 2000),
+        'random_seed': _request_int('random_seed', 42, 0, 999999),
+        'scaling': request.args.get('scaling', 'standard'),
+        'max_points': _request_int('max_points', 3000, 250, 20000)
+    }
+    if options['scaling'] not in {'standard', 'robust', 'none'}:
+        options['scaling'] = 'standard'
+
+    warnings = _build_tsne_quality_warnings(df, feature_columns)
+    tsne_input_df, sampling_warning = _downsample_results_tsne_df(df, options['max_points'], options['random_seed'])
+    if sampling_warning:
+        warnings.append(sampling_warning)
+    cache_key = None if request.args.get('refresh') else _build_results_tsne_cache_key(project, feature_columns, options)
+    tsne_df = PlotGenerator._run_tsne(
+        tsne_input_df,
+        feature_columns,
+        cache_key=cache_key,
+        perplexity=options['perplexity'],
+        max_iter=options['iterations'],
+        learning_rate=options['learning_rate'],
+        random_state=options['random_seed'],
+        scaling=options['scaling'],
+    )
+
+    payload = _build_results_tsne_payload(tsne_df, feature_columns, lab_result_columns, warnings, options)
+    payload['success'] = True
+    payload['project'] = project.to_dict()
+    return jsonify(payload)
 
 
 @results_bp.route('/projects/<int:project_id>', methods=['DELETE'])

@@ -1,5 +1,6 @@
 import pandas as pd
 from flask import Flask
+from unittest.mock import patch
 
 from app.api.results import results_bp
 from app.database import Cycle, Project, Sample, db
@@ -19,7 +20,7 @@ def _make_app(tmp_path):
     return app
 
 
-def _create_sample(dataset_path, idx_sample, row_data, lab_results):
+def _create_sample(dataset_path, idx_sample, row_data, lab_results, predictions=None):
     project = Project(name="Closed Loop Test", dataset_path=str(dataset_path))
     db.session.add(project)
     db.session.flush()
@@ -31,6 +32,7 @@ def _create_sample(dataset_path, idx_sample, row_data, lab_results):
 
     sample = Sample(cycle_id=cycle.id, idx_sample=idx_sample)
     sample.set_row_data(row_data)
+    sample.set_predictions(predictions or {})
     sample.set_lab_results(lab_results)
     db.session.add(sample)
     db.session.commit()
@@ -87,3 +89,48 @@ def test_sync_sample_falls_back_to_row_position_when_dataset_has_no_identity_col
         assert response.status_code == 200
         synced = pd.read_csv(dataset_path)
         assert synced.loc[1, "target"] == 9.75
+
+
+def test_results_tsne_endpoint_returns_cycle_lab_and_error_overlays(tmp_path):
+    dataset_path = tmp_path / "designspace.csv"
+    pd.DataFrame({
+        "Idx_Sample": [101, 102, 103],
+        "x": [1.0, 2.0, 3.0],
+        "constant": [5.0, 5.0, 5.0],
+        "strength": [pd.NA, pd.NA, pd.NA],
+    }).to_csv(dataset_path, index=False)
+
+    app = _make_app(tmp_path)
+    with app.app_context():
+        sample = _create_sample(
+            dataset_path,
+            idx_sample=102,
+            row_data={"Idx_Sample": 102, "x": 2.0, "constant": 5.0},
+            lab_results={"strength": 44.5},
+            predictions={"Predicted_strength": 43.0, "Utility": 0.91},
+        )
+        project_id = db.session.get(Cycle, sample.cycle_id).project_id
+
+        def fake_tsne(df, *args, **kwargs):
+            df = df.copy()
+            df["tsne-2d-one"] = [0.0, 1.0, 2.0]
+            df["tsne-2d-two"] = [2.0, 1.0, 0.0]
+            return df
+
+        with patch("app.api.results.PlotGenerator._run_tsne", side_effect=fake_tsne):
+            response = app.test_client().get(
+                f"/api/results/projects/{project_id}/tsne?input_columns=x&input_columns=constant"
+            )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["success"] is True
+        assert payload["feature_columns"] == ["x", "constant"]
+        assert "Lab_Status" in payload["overlay_parameters"]
+        assert any("Constant columns" in warning for warning in payload["warnings"])
+
+        selected = [row for row in payload["rows"] if row.get("Selected_For_Lab") is True]
+        assert len(selected) == 1
+        assert selected[0]["Lab_Status"] == "completed"
+        assert selected[0]["Measured_strength"] == 44.5
+        assert selected[0]["Prediction_Error_strength"] == 1.5

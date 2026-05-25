@@ -29,6 +29,11 @@
         background: #f8f9fa;
         border-radius: 8px;
     }
+
+    .tsne-warning-list {
+        margin-bottom: 0;
+        padding-left: 1.25rem;
+    }
 </style>
 {% endblock %}
 
@@ -85,6 +90,83 @@
     <div id="cycles-container">
             <div class="alert alert-secondary text-center">
             <i class="bi bi-folder2-open"></i> Select a project to view lab cycles
+        </div>
+    </div>
+
+    <!-- Results t-SNE Section -->
+    <div class="card mt-4" id="results-tsne-section" style="display: none;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-diagram-3"></i> t-SNE Design-Space Map</h5>
+            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse"
+                data-bs-target="#results-tsne-settings">
+                Advanced settings
+            </button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">
+                Use this map to see where recommended samples sit in the design space, which cycles they came from,
+                which samples are completed, and how measured values compare with predictions.
+            </p>
+            <div class="row g-3 align-items-end mb-3">
+                <div class="col-lg-5">
+                    <label class="form-label">t-SNE feature columns</label>
+                    <select multiple class="form-select" id="results-tsne-features" size="5"></select>
+                    <div class="form-text">Choose material/design-space inputs, not target or prediction columns.</div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label">Color by</label>
+                    <select class="form-select" id="results-tsne-color"></select>
+                </div>
+                <div class="col-lg-2">
+                    <label class="form-label">Overlay</label>
+                    <select class="form-select" id="results-tsne-overlay"></select>
+                </div>
+                <div class="col-lg-2">
+                    <button class="btn btn-primary w-100" id="results-tsne-run-btn">
+                        <i class="bi bi-arrow-repeat"></i> Recompute
+                    </button>
+                </div>
+            </div>
+
+            <div class="collapse mb-3" id="results-tsne-settings">
+                <div class="row g-3">
+                    <div class="col-md-2">
+                        <label class="form-label">Perplexity</label>
+                        <input type="number" class="form-control" id="results-tsne-perplexity" min="2" max="100"
+                            step="1" value="20">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Iterations</label>
+                        <input type="number" class="form-control" id="results-tsne-iterations" min="300" max="3000"
+                            step="50" value="350">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Learning rate</label>
+                        <input type="number" class="form-control" id="results-tsne-learning-rate" min="2" max="2000"
+                            step="10" value="100">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Scaling</label>
+                        <select class="form-select" id="results-tsne-scaling">
+                            <option value="standard">Standard</option>
+                            <option value="robust">Robust</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Seed</label>
+                        <input type="number" class="form-control" id="results-tsne-seed" min="0" value="42">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Max points</label>
+                        <input type="number" class="form-control" id="results-tsne-max-points" min="250" max="20000"
+                            step="250" value="3000">
+                    </div>
+                </div>
+            </div>
+
+            <div id="results-tsne-warnings" class="alert alert-warning py-2" style="display: none;"></div>
+            <div id="results-tsne-plot" class="plot-container"></div>
         </div>
     </div>
 
@@ -214,12 +296,16 @@
             } else {
                 document.getElementById('cycles-container').innerHTML =
                     '<div class="alert alert-secondary text-center"><i class="bi bi-folder2-open"></i> Select a project to view cycles</div>';
+                document.getElementById('results-tsne-section').style.display = 'none';
                 document.getElementById('plot-section').style.display = 'none';
             }
         });
 
         document.getElementById('create-project-btn').addEventListener('click', createProject);
         document.getElementById('generate-plot-btn').addEventListener('click', generatePlot);
+        document.getElementById('results-tsne-run-btn').addEventListener('click', () => loadProjectTsne(true));
+        document.getElementById('results-tsne-color').addEventListener('change', renderResultsTsnePlot);
+        document.getElementById('results-tsne-overlay').addEventListener('change', renderResultsTsnePlot);
 
         // Functions
         async function loadProjects() {
@@ -297,12 +383,219 @@
                 renderCycles(currentProject.cycles);
 
                 // Show plot section
+                document.getElementById('results-tsne-section').style.display = 'block';
+                loadProjectTsne(false);
                 document.getElementById('plot-section').style.display = 'block';
                 populatePlotColumns();
 
             } catch (err) {
                 console.error('Error loading project:', err);
             }
+        }
+
+        async function loadProjectTsne(forceRecompute) {
+            if (!currentProjectId) return;
+
+            const plotDiv = document.getElementById('results-tsne-plot');
+            plotDiv.innerHTML = '<div class="text-muted text-center p-5">Calculating t-SNE map...</div>';
+
+            const params = new URLSearchParams();
+            const featureSelect = document.getElementById('results-tsne-features');
+            const selectedFeatures = getSelectedOptions(featureSelect);
+            selectedFeatures.forEach(col => params.append('input_columns', col));
+            params.set('perplexity', document.getElementById('results-tsne-perplexity').value || '20');
+            params.set('iterations', document.getElementById('results-tsne-iterations').value || '350');
+            params.set('learning_rate', document.getElementById('results-tsne-learning-rate').value || '100');
+            params.set('scaling', document.getElementById('results-tsne-scaling').value || 'standard');
+            params.set('random_seed', document.getElementById('results-tsne-seed').value || '42');
+            params.set('max_points', document.getElementById('results-tsne-max-points').value || '3000');
+            if (forceRecompute) params.set('refresh', String(Date.now()));
+
+            try {
+                const response = await fetch(`/api/results/projects/${currentProjectId}/tsne?${params.toString()}`);
+                const data = await response.json();
+                if (!data.success) {
+                    plotDiv.innerHTML = `<div class="alert alert-danger">${data.error || 'Could not load t-SNE map.'}</div>`;
+                    return;
+                }
+
+                window.currentResultsTsne = data;
+                populateResultsTsneControls(data, selectedFeatures.length > 0);
+                renderResultsTsnePlot();
+            } catch (err) {
+                console.error('Error loading results t-SNE:', err);
+                plotDiv.innerHTML = '<div class="alert alert-danger">Could not load the t-SNE map.</div>';
+            }
+        }
+
+        function populateResultsTsneControls(data, keepFeatureSelection) {
+            const featureSelect = document.getElementById('results-tsne-features');
+            const colorSelect = document.getElementById('results-tsne-color');
+            const overlaySelect = document.getElementById('results-tsne-overlay');
+
+            const selectedFeatures = keepFeatureSelection ? getSelectedOptions(featureSelect) : data.feature_columns;
+            setSelectOptions(featureSelect, data.feature_candidates || data.feature_columns || [], selectedFeatures, true);
+            setSelectOptions(colorSelect, data.color_parameters || [], colorSelect.value || data.defaults?.color, false);
+            setSelectOptions(overlaySelect, data.overlay_parameters || [], overlaySelect.value || data.defaults?.overlay, false);
+
+            document.getElementById('results-tsne-perplexity').value = data.options?.perplexity ?? 20;
+            document.getElementById('results-tsne-iterations').value = data.options?.iterations ?? 350;
+            document.getElementById('results-tsne-learning-rate').value = data.options?.learning_rate ?? 100;
+            document.getElementById('results-tsne-scaling').value = data.options?.scaling ?? 'standard';
+            document.getElementById('results-tsne-seed').value = data.options?.random_seed ?? 42;
+            document.getElementById('results-tsne-max-points').value = data.options?.max_points ?? 3000;
+
+            const warningsDiv = document.getElementById('results-tsne-warnings');
+            const warnings = data.warnings || [];
+            if (warnings.length > 0) {
+                warningsDiv.style.display = 'block';
+                warningsDiv.innerHTML = `<strong>t-SNE input checks:</strong><ul class="tsne-warning-list">${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`;
+            } else {
+                warningsDiv.style.display = 'none';
+                warningsDiv.innerHTML = '';
+            }
+        }
+
+        function renderResultsTsnePlot() {
+            const data = window.currentResultsTsne;
+            if (!data || !Array.isArray(data.rows)) return;
+
+            const colorParam = document.getElementById('results-tsne-color').value || data.defaults?.color;
+            const overlayParam = document.getElementById('results-tsne-overlay').value || data.defaults?.overlay;
+            const figure = buildResultsTsneFigure(data, colorParam, overlayParam);
+            Plotly.newPlot('results-tsne-plot', figure.data, figure.layout, { responsive: true });
+        }
+
+        function buildResultsTsneFigure(data, colorParam, overlayParam) {
+            const rows = (data.rows || []).filter(row => isFiniteNumber(row.TSNE_X) && isFiniteNumber(row.TSNE_Y));
+            const numericParams = new Set(data.numeric_parameters || []);
+            const colorIsNumeric = numericParams.has(colorParam);
+            const groupParam = overlayParam && overlayParam !== 'None'
+                ? overlayParam
+                : (colorIsNumeric ? null : colorParam);
+            const grouped = groupRows(rows, groupParam);
+            const orderedGroups = orderResultsTsneGroups([...grouped.keys()]);
+            const palette = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#f59e0b', '#0891b2', '#be185d', '#64748b'];
+
+            const traces = orderedGroups.map((groupName, index) => {
+                const groupRowsForTrace = grouped.get(groupName) || [];
+                const isUntested = groupName === 'Untested' || groupName === 'Not selected';
+                const marker = {
+                    size: groupRowsForTrace.map(row => row.Selected_For_Lab ? 11 : 6),
+                    opacity: isUntested ? 0.28 : 0.86,
+                    symbol: groupRowsForTrace.map(row => getResultsTsneSymbol(row)),
+                    line: { color: 'rgba(17, 24, 39, 0.45)', width: 0.6 }
+                };
+
+                if (colorIsNumeric) {
+                    marker.color = groupRowsForTrace.map(row => Number(row[colorParam] ?? 0));
+                    marker.colorscale = 'Turbo';
+                    marker.showscale = index === 0;
+                    marker.colorbar = { title: colorParam };
+                } else {
+                    marker.color = palette[index % palette.length];
+                }
+
+                return {
+                    type: 'scatter',
+                    mode: 'markers',
+                    name: groupParam ? groupName : colorParam,
+                    x: groupRowsForTrace.map(row => Number(row.TSNE_X)),
+                    y: groupRowsForTrace.map(row => Number(row.TSNE_Y)),
+                    marker,
+                    customdata: groupRowsForTrace.map(row => [
+                        row['Row number'] ?? '',
+                        row.Idx_Sample ?? '',
+                        row.Cycle_Label ?? '',
+                        row.Lab_Status ?? '',
+                        row[colorParam] ?? ''
+                    ]),
+                    hovertemplate:
+                        'Row: %{customdata[0]}<br>' +
+                        'Idx: %{customdata[1]}<br>' +
+                        'Cycle: %{customdata[2]}<br>' +
+                        'Status: %{customdata[3]}<br>' +
+                        `${escapePlotlyLabel(colorParam)}: %{customdata[4]}<br>` +
+                        't-SNE X: %{x:.3f}<br>t-SNE Y: %{y:.3f}<extra></extra>'
+                };
+            });
+
+            return {
+                data: traces,
+                layout: {
+                    title: 'Results t-SNE: design space with lab-cycle overlays',
+                    xaxis: { title: 'TSNE_X', showgrid: false, zeroline: false },
+                    yaxis: { title: 'TSNE_Y', showgrid: false, zeroline: false },
+                    plot_bgcolor: '#f8f9fa',
+                    paper_bgcolor: '#f8f9fa',
+                    height: 520,
+                    margin: { l: 56, r: 28, t: 56, b: 52 },
+                    legend: { orientation: 'h', y: -0.18 }
+                }
+            };
+        }
+
+        function getSelectedOptions(select) {
+            if (!select) return [];
+            return Array.from(select.selectedOptions || []).map(option => option.value).filter(Boolean);
+        }
+
+        function setSelectOptions(select, values, selectedValue, multiple) {
+            if (!select) return;
+            const previous = multiple ? getSelectedOptions(select) : select.value;
+            const uniqueValues = [...new Set((values || []).filter(Boolean))];
+            const selectedSet = new Set(Array.isArray(selectedValue) ? selectedValue : [selectedValue || previous]);
+            select.innerHTML = uniqueValues.map(value => {
+                const selected = selectedSet.has(value) ? ' selected' : '';
+                return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(value)}</option>`;
+            }).join('');
+            if (!multiple && !select.value && uniqueValues.length > 0) {
+                select.value = uniqueValues[0];
+            }
+        }
+
+        function groupRows(rows, groupParam) {
+            const grouped = new Map();
+            rows.forEach(row => {
+                const groupName = groupParam ? String(row[groupParam] ?? 'Unknown') : 'All samples';
+                if (!grouped.has(groupName)) grouped.set(groupName, []);
+                grouped.get(groupName).push(row);
+            });
+            return grouped;
+        }
+
+        function orderResultsTsneGroups(groups) {
+            const preferred = ['completed', 'tested', 'pending', 'Untested', 'Not selected', 'true', 'false'];
+            return groups.sort((a, b) => {
+                const ai = preferred.indexOf(a);
+                const bi = preferred.indexOf(b);
+                if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+                return String(a).localeCompare(String(b));
+            });
+        }
+
+        function getResultsTsneSymbol(row) {
+            if (row.Lab_Status === 'completed') return 'star';
+            if (row.Lab_Status === 'pending') return 'diamond';
+            if (row.Selected_For_Lab) return 'circle';
+            return 'circle';
+        }
+
+        function isFiniteNumber(value) {
+            return value !== null && value !== '' && Number.isFinite(Number(value));
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function escapePlotlyLabel(value) {
+            return escapeHtml(value).replace(/%/g, '%%');
         }
 
         function renderCycles(cycles) {

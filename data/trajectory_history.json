@@ -1268,6 +1268,162 @@
         "water -eff": 107.80714
       },
       "utility": 1.1785350549159195
+    },
+    {
+      "iteration": 58,
+      "timestamp": "2026-05-25T10:50:04.268016",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 200.0,
+        "GGBFS (kg/m3)": 200.0,
+        "Coarse aggregate (kg/m3)": 1043.045,
+        "Fine aggregate (kg/m3)": 772.95498,
+        "Total aggregates": 1816.0,
+        "Na2SiO3": 128.57143,
+        "Na2O (Dry)": 14.79,
+        "Sio2 (Dry)": 38.57,
+        "Superplasticizer": 16.0,
+        "water -eff": 119.78571,
+        "Slump - Target (mm)": null
+      },
+      "utility": 0.932451756985722
+    },
+    {
+      "iteration": 59,
+      "timestamp": "2026-05-25T10:51:46.021203",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 180.0,
+        "GGBFS (kg/m3)": 180.0,
+        "Coarse aggregate (kg/m3)": 1090.8,
+        "Fine aggregate (kg/m3)": 774.0,
+        "Total aggregates": 1864.8,
+        "Na2SiO3": 115.71429,
+        "Na2O (Dry)": 13.31,
+        "Sio2 (Dry)": 34.71,
+        "Superplasticizer": 14.4,
+        "water -eff": 107.80714
+      },
+      "utility": 1.674980535293078
+    },
+    {
+      "iteration": 60,
+      "timestamp": "2026-05-25T11:12:21.627849",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 215.0,
+        "GGBFS (kg/m3)": 215.0,
+        "Coarse aggregate (kg/m3)": 967.96105,
+        "Fine aggregate (kg/m3)": 795.03895,
+        "Total aggregates": 1763.0,
+        "Na2SiO3": 153.57143,
+        "Na2O (Dry)": 17.66,
+        "Sio2 (Dry)": 46.07,
+        "Superplasticizer": 17.2,
+        "water -eff": 141.93071
+      },
+      "utility": 1.6425635344594443
+    },
+    {
+      "iteration": 61,
+      "timestamp": "2026-05-25T11:12:47.854939",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 180.0,
+        "GGBFS (kg/m3)": 180.0,
+        "Coarse aggregate (kg/m3)": 1090.8446,
+        "Fine aggregate (kg/m3)": 773.9554,
+        "Total aggregates": 1864.8,
+        "Na2SiO3": 128.57143,
+        "Na2O (Dry)": 14.79,
+        "Sio2 (Dry)": 38.57,
+        "Superplasticizer": 14.4,
+        "water -eff": 118.82571
+      },
+      "utility": 1.6359199280603487
+    },
+    {
+      "iteration": 62,
+      "timestamp": "2026-05-25T11:18:40.561639",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "(W/C) [Water/Cement ratio]": 0.45,
+        "[CEM]Cement content": 200.0,
+        "[F/C] Factor Fine/Coarse (*)": 0.75,
+        "Fine Rec Agg % (**)": 0.0,
+        "Coarse Rec Agg % (***)": 20.0,
+        "RAg.T [Recycled Aggregates Types] (****)": 0.0
+      },
+      "utility": 5.359046727232908
+    },
+    {
+      "iteration": 63,
+      "timestamp": "2026-05-25T11:19:37.268114",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "(W/C) [Water/Cement ratio]": 0.45,
+        "[CEM]Cement content": 200.0,
+        "[F/C] Factor Fine/Coarse (*)": 0.75,
+        "Fine Rec Agg % (**)": 0.0,
+        "Coarse Rec Agg % (***)": 20.0,
+        "RAg.T [Recycled Aggregates Types] (****)": 0.0
+      },
+      "utility": 5.049483855683656
+    },
+    {
+      "iteration": 64,
+      "timestamp": "2026-05-25T12:01:59.251864",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "(W/C) [Water/Cement ratio]": 0.5,
+        "[CEM]Cement content": 320.0,
+        "[F/C] Factor Fine/Coarse (*)": 0.75,
+        "Fine Rec Agg % (**)": 0.0,
+        "Coarse Rec Agg % (***)": 20.0,
+        "RAg.T [Recycled Aggregates Types] (****)": 0.0
+      },
+      "utility": 0.8936935499793536
+    },
+    {
+      "iteration": 65,
+      "timestamp": "2026-05-25T12:03:13.632601",
+      "mode": "ML_MODE",
+      "row_index": 0,
+      "features": {
+        "SiO2": 47.085,
+        "CaO": 18.3,
+        "SO3": 0.45,
+        "FA (kg/m3)": 215.0,
+        "GGBFS (kg/m3)": 215.0,
+        "Coarse aggregate (kg/m3)": 967.96105,
+        "Fine aggregate (kg/m3)": 795.03895,
+        "Total aggregates": 1763.0,
+        "Na2SiO3": 153.57143,
+        "Na2O (Dry)": 17.66,
+        "Sio2 (Dry)": 46.07,
+        "Superplasticizer": 17.2,
+        "water -eff": 141.93071
+      },
+      "utility": 1.5444860644310534
     }
   ]
 }

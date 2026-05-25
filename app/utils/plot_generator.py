@@ -14,7 +14,17 @@ class PlotGenerator:
     #   TSNE CALCULATION (SLAMD-EXACT WITH NORMALIZATION)
     # ======================================================
     @classmethod
-    def _run_tsne(cls, df: pd.DataFrame, input_columns, cache_key=None):
+    def _run_tsne(
+        cls,
+        df: pd.DataFrame,
+        input_columns,
+        cache_key=None,
+        perplexity=None,
+        max_iter=350,
+        learning_rate=100,
+        random_state=42,
+        scaling="standard",
+    ):
         """
         Calculate TSNE coordinates EXACTLY like SLAMD.
         CRITICAL: SLAMD standardizes features before TSNE!
@@ -23,6 +33,11 @@ class PlotGenerator:
             df: DataFrame containing the data
             input_columns: List of input column names
             cache_key: Optional key for caching the result (e.g., filename + timestamp)
+            perplexity: Optional effective-neighbor setting. Defaults to min(20, n - 1).
+            max_iter: Maximum t-SNE iterations.
+            learning_rate: Gradient descent step size.
+            random_state: Seed for stable embeddings.
+            scaling: standard, robust, or none.
         """
         if df is None or df.empty:
             print("⚠️ TSNE: empty dataframe")
@@ -71,25 +86,34 @@ class PlotGenerator:
             # Prepare feature matrix
             tsne_input_df = df[feature_columns].fillna(0).astype(float)
             
-            # CRITICAL: SLAMD STANDARDIZES DATA BEFORE TSNE
-            # This is why their clusters are so tight!
-            from sklearn.preprocessing import StandardScaler
-            scaler = StandardScaler()
-            tsne_input_scaled = scaler.fit_transform(tsne_input_df.values)
-            
-            print(f"✅ TSNE: Data standardized (mean=0, std=1)")
-            
-            # SLAMD exact parameters
-            perplexity = min(20, len(df) - 1)
+            # CRITICAL: SLAMD STANDARDIZES DATA BEFORE TSNE by default.
+            if scaling == "robust":
+                from sklearn.preprocessing import RobustScaler
+                scaler = RobustScaler()
+                tsne_input_scaled = scaler.fit_transform(tsne_input_df.values)
+                print("✅ TSNE: Data robust-scaled (median/IQR)")
+            elif scaling == "none":
+                tsne_input_scaled = tsne_input_df.values
+                print("✅ TSNE: Data scaling skipped")
+            else:
+                from sklearn.preprocessing import StandardScaler
+                scaler = StandardScaler()
+                tsne_input_scaled = scaler.fit_transform(tsne_input_df.values)
+                print(f"✅ TSNE: Data standardized (mean=0, std=1)")
+
+            effective_perplexity = perplexity if perplexity is not None else min(20, len(df) - 1)
+            effective_perplexity = max(2, min(float(effective_perplexity), max(2, len(df) - 1)))
+            effective_iter = max(250, int(max_iter))
+            effective_learning_rate = max(2.0, float(learning_rate))
             
             tsne = TSNE(
                 n_components=2,
                 verbose=1,
-                perplexity=perplexity,
-                max_iter=350,
-                random_state=42,
+                perplexity=effective_perplexity,
+                max_iter=effective_iter,
+                random_state=int(random_state),
                 init='pca',
-                learning_rate=100
+                learning_rate=effective_learning_rate
             )
             
             # Run TSNE on STANDARDIZED data
