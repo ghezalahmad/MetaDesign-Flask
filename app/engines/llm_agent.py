@@ -4,9 +4,33 @@ import json
 import requests
 import pandas as pd
 
+
+PROVIDER_DEFAULTS = {
+    "ollama": {
+        "name": "Local Ollama",
+        "model": "mistral:latest",
+        "key_label": "API key",
+    },
+    "mistral_cloud": {
+        "name": "Mistral API",
+        "model": "mistral-large-latest",
+        "key_label": "Mistral API key",
+    },
+    "openai": {
+        "name": "OpenAI API",
+        "model": "gpt-5-mini",
+        "key_label": "OpenAI API key",
+    },
+    "anthropic": {
+        "name": "Claude API",
+        "model": "claude-sonnet-4-20250514",
+        "key_label": "Anthropic API key",
+    },
+}
+
 class LLMAgent:
     """
-    LLM Agent supporting both Ollama (local) and Mistral Cloud API.
+    LLM Agent supporting local Ollama and multiple cloud APIs.
     
     Implements LLM-AL framework from paper:
     "Training-Free Active Learning Framework in Materials Science with Large Language Models"
@@ -14,10 +38,12 @@ class LLMAgent:
     Provider can be:
     - 'ollama': Uses local Ollama server (no API key required)
     - 'mistral_cloud': Uses Mistral AI Cloud API (requires API key)
+    - 'openai': Uses OpenAI Chat Completions API (requires API key)
+    - 'anthropic': Uses Anthropic Messages API for Claude (requires API key)
     """
     def __init__(self, provider='ollama', model='mistral:latest', api_key=None):
         self.provider = provider
-        self.model = model
+        self.model = model or PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["ollama"])["model"]
         self.api_key = api_key
         self.iteration_count = 0  # Track iteration count
         
@@ -26,6 +52,8 @@ class LLMAgent:
         
         # Mistral Cloud endpoint
         self.mistral_cloud_url = "https://api.mistral.ai/v1/chat/completions"
+        self.openai_chat_url = "https://api.openai.com/v1/chat/completions"
+        self.anthropic_messages_url = "https://api.anthropic.com/v1/messages"
 
     def propose_next_experiment(self, context, history_df, parameters_config, 
                                   prompt_style="parameter-format", target_config=None,
@@ -46,8 +74,15 @@ class LLMAgent:
         
         if self.provider == 'ollama':
             return self._call_ollama(context, history_df, parameters_config, prompt_style, target_config, strategy)
-        else:
+        if self.provider == 'mistral_cloud':
             return self._call_mistral_cloud(context, history_df, parameters_config, prompt_style, target_config, strategy)
+        if self.provider == 'openai':
+            return self._call_openai(context, history_df, parameters_config, prompt_style, target_config, strategy)
+        if self.provider == 'anthropic':
+            return self._call_anthropic(context, history_df, parameters_config, prompt_style, target_config, strategy)
+
+        logging.warning("Unknown LLM provider: %s", self.provider)
+        return f"UNKNOWN_PROVIDER: {self.provider}"
 
     def _call_ollama(self, context, history_df, parameters_config, prompt_style, target_config, strategy):
         """Call local Ollama server with temperature=0 for consistency."""
@@ -85,35 +120,95 @@ class LLMAgent:
 
     def _call_mistral_cloud(self, context, history_df, parameters_config, prompt_style, target_config, strategy):
         """Call Mistral Cloud API with temperature=0."""
-        if not self.api_key:
-            logging.warning("No Mistral API Key provided")
-            return "NO_API_KEY_PROVIDED: Please enter your Mistral API key"
-
         system_prompt = self._build_system_prompt(prompt_style, strategy)
         user_prompt = self._build_user_prompt(context, history_df, parameters_config, prompt_style, target_config, strategy)
-        
+        return self._call_openai_compatible_chat(
+            url=self.mistral_cloud_url,
+            provider_name="Mistral",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0,
+        )
+
+    def _call_openai(self, context, history_df, parameters_config, prompt_style, target_config, strategy):
+        """Call OpenAI Chat Completions API with temperature=0."""
+        system_prompt = self._build_system_prompt(prompt_style, strategy)
+        user_prompt = self._build_user_prompt(context, history_df, parameters_config, prompt_style, target_config, strategy)
+        return self._call_openai_compatible_chat(
+            url=self.openai_chat_url,
+            provider_name="OpenAI",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0,
+        )
+
+    def _call_openai_compatible_chat(self, url, provider_name, system_prompt, user_prompt, temperature=0):
+        """Call providers that implement an OpenAI-compatible chat API."""
+        if not self.api_key:
+            logging.warning("No %s API key provided", provider_name)
+            return f"NO_API_KEY_PROVIDED: Please enter your {provider_name} API key"
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
+
         data = {
-            "model": "mistral-large-latest",
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0  # Paper: temperature=0 for reproducibility
+            "temperature": temperature
         }
-        
+
         try:
-            response = requests.post(self.mistral_cloud_url, headers=headers, json=data, timeout=60)
+            response = requests.post(url, headers=headers, json=data, timeout=60)
+            if response.status_code == 400 and "temperature" in data:
+                # Some reasoning models reject temperature. Retry with provider default.
+                data.pop("temperature", None)
+                response = requests.post(url, headers=headers, json=data, timeout=60)
             response.raise_for_status()
             result = response.json()
             return result['choices'][0]['message']['content']
         except Exception as e:
-            logging.error(f"Mistral Cloud request failed: {e}")
-            return f"MISTRAL_CLOUD_ERROR: {str(e)}"
+            logging.error("%s request failed: %s", provider_name, e)
+            return f"{provider_name.upper()}_ERROR: {str(e)}"
+
+    def _call_anthropic(self, context, history_df, parameters_config, prompt_style, target_config, strategy):
+        """Call Anthropic Messages API for Claude."""
+        if not self.api_key:
+            logging.warning("No Anthropic API key provided")
+            return "NO_API_KEY_PROVIDED: Please enter your Anthropic API key"
+
+        system_prompt = self._build_system_prompt(prompt_style, strategy)
+        user_prompt = self._build_user_prompt(context, history_df, parameters_config, prompt_style, target_config, strategy)
+        return self._call_anthropic_messages(system_prompt, user_prompt, temperature=0)
+
+    def _call_anthropic_messages(self, system_prompt, user_prompt, temperature=0):
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        data = {
+            "model": self.model,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "max_tokens": 2048,
+            "temperature": temperature,
+        }
+
+        try:
+            response = requests.post(self.anthropic_messages_url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            content = result.get("content", [])
+            text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
+            return "\n".join(text_parts).strip()
+        except Exception as e:
+            logging.error("Anthropic request failed: %s", e)
+            return f"ANTHROPIC_ERROR: {str(e)}"
 
     def _is_ollama_running(self):
         """Check if Ollama server is running."""
@@ -300,11 +395,7 @@ Respond with ONLY valid JSON containing the predicted values."""
         logging.info(f"🔮 Sending prediction request to LLM...")
         print(f"🔮 Targets to predict: {target_columns}")
         
-        # Call the LLM
-        if self.provider == 'ollama':
-            response = self._call_llm_raw(system_prompt, user_prompt, self.ollama_chat_url, is_ollama=True)
-        else:
-            response = self._call_llm_raw(system_prompt, user_prompt, self.mistral_cloud_url, is_ollama=False)
+        response = self._call_llm_raw(system_prompt, user_prompt, temperature=0.1)
         
         logging.info(f"🔮 LLM Response: {response[:300]}...")
         print(f"🔮 LLM Raw Response: {response}")
@@ -314,9 +405,9 @@ Respond with ONLY valid JSON containing the predicted values."""
         print(f"🔮 Parsed predictions: {predictions}")
         return predictions
 
-    def _call_llm_raw(self, system_prompt, user_prompt, url, is_ollama=True):
+    def _call_llm_raw(self, system_prompt, user_prompt, temperature=0.1):
         """Call LLM with custom prompts."""
-        if is_ollama:
+        if self.provider == 'ollama':
             if not self._is_ollama_running():
                 return "{}"
             data = {
@@ -326,39 +417,29 @@ Respond with ONLY valid JSON containing the predicted values."""
                     {"role": "user", "content": user_prompt}
                 ],
                 "stream": False,
-                "options": {"temperature": 0.1}  # Slight temperature for prediction
+                "options": {"temperature": temperature}  # Slight temperature for prediction
             }
             try:
-                response = requests.post(url, json=data, timeout=180)
+                response = requests.post(self.ollama_chat_url, json=data, timeout=180)
                 response.raise_for_status()
                 result = response.json()
                 return result.get('message', {}).get('content', '{}')
             except Exception as e:
                 logging.error(f"LLM prediction call failed: {e}")
                 return "{}"
-        else:
-            if not self.api_key:
-                return "{}"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-            data = {
-                "model": "mistral-large-latest",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.1
-            }
-            try:
-                response = requests.post(url, headers=headers, json=data, timeout=60)
-                response.raise_for_status()
-                result = response.json()
-                return result['choices'][0]['message']['content']
-            except Exception as e:
-                logging.error(f"LLM prediction call failed: {e}")
-                return "{}"
+
+        if self.provider == 'mistral_cloud':
+            return self._call_openai_compatible_chat(
+                self.mistral_cloud_url, "Mistral", system_prompt, user_prompt, temperature=temperature
+            )
+        if self.provider == 'openai':
+            return self._call_openai_compatible_chat(
+                self.openai_chat_url, "OpenAI", system_prompt, user_prompt, temperature=temperature
+            )
+        if self.provider == 'anthropic':
+            return self._call_anthropic_messages(system_prompt, user_prompt, temperature=temperature)
+
+        return "{}"
 
     def _parse_prediction_response(self, response, target_columns):
         """Parse LLM prediction response into dict of values."""

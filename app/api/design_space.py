@@ -14,6 +14,11 @@ from flask import (
     session, redirect, url_for, send_from_directory
 )
 from werkzeug.utils import secure_filename
+from app.utils.session_store import (
+    SHARED_DESIGNSPACE_DIR,
+    get_session_designspace_dir,
+    resolve_dataset_path,
+)
 
 design_space_bp = Blueprint('design_space', __name__)
 logger = logging.getLogger(__name__)
@@ -112,13 +117,13 @@ def scenario_to_design_space():
 @design_space_bp.route('/design-space')
 def design_space():
     """Design space management page."""
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
     history = []
-    if os.path.exists(design_space_dir):
-        for filename in sorted(os.listdir(design_space_dir), reverse=True):
-            if filename.endswith('.csv'):
-                filepath = os.path.join(design_space_dir, filename)
-                history.append({'name': filename, 'path': filepath})
+    for design_space_dir in [get_session_designspace_dir(create=True), SHARED_DESIGNSPACE_DIR]:
+        if os.path.exists(design_space_dir):
+            for filename in sorted(os.listdir(design_space_dir), reverse=True):
+                if filename.endswith('.csv'):
+                    filepath = os.path.join(design_space_dir, filename)
+                    history.append({'name': filename, 'path': filepath})
     return render_template('design_space.html', history=history)
 
 
@@ -200,7 +205,7 @@ def generate_design_space():
     if total_combinations > 100000 and 'confirm' not in data:
         return "Dataset is too large. Please confirm to proceed.", 400
 
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
+    design_space_dir = get_session_designspace_dir(create=True)
     os.makedirs(design_space_dir, exist_ok=True)
     
     product_iter = itertools.product(*[generate_feature_values(f) for f in feature_definitions])
@@ -227,8 +232,10 @@ def generate_design_space():
 def download_design_space(filename):
     """Download a design space file."""
     filename = secure_filename(filename)
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-    filepath = os.path.join(design_space_dir, filename)
+    filepath = resolve_dataset_path(f"designspaces/{filename}")
+    if not filepath:
+        return jsonify({'success': False, 'error': 'File not found'}), 404
+    design_space_dir = os.path.dirname(filepath)
     
     # Verify path is within allowed directory
     if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
@@ -242,7 +249,7 @@ def delete_design_space(filename):
     """Delete a design space file."""
     try:
         filename = secure_filename(filename)
-        design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
+        design_space_dir = get_session_designspace_dir(create=True)
         filepath = os.path.join(design_space_dir, filename)
         
         # Verify path is within allowed directory
@@ -262,9 +269,8 @@ def set_filepath_from_url():
     """Set session filepath from URL parameter."""
     filename = request.args.get('filename')
     if filename:
-        design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-        filepath = os.path.join(design_space_dir, filename)
-        if os.path.exists(filepath):
+        filepath = resolve_dataset_path(f"designspaces/{filename}")
+        if filepath and os.path.exists(filepath):
             session['filepath'] = filepath
             try:
                 data = pd.read_csv(filepath)
@@ -285,10 +291,9 @@ def get_design_space_info():
     if not filename:
         return jsonify({'success': False, 'error': 'No filename provided.'})
     
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-    filepath = os.path.join(design_space_dir, filename)
+    filepath = resolve_dataset_path(f"designspaces/{filename}")
     
-    if not os.path.exists(filepath):
+    if not filepath or not os.path.exists(filepath):
         return jsonify({'success': False, 'error': 'File not found.'})
     
     try:
@@ -317,8 +322,10 @@ def get_design_space_data(filename):
     Returns columns with metadata (including which have NaN values) and all data rows.
     """
     filename = secure_filename(filename)
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-    filepath = os.path.join(design_space_dir, filename)
+    filepath = resolve_dataset_path(f"designspaces/{filename}")
+    if not filepath:
+        return jsonify({'success': False, 'error': 'File not found.'}), 404
+    design_space_dir = os.path.dirname(filepath)
     
     # Security check
     if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
@@ -367,8 +374,10 @@ def save_design_space_data(filename):
     Expects JSON body: { column: "column_name", updates: { row_index: value, ... } }
     """
     filename = secure_filename(filename)
-    design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-    filepath = os.path.join(design_space_dir, filename)
+    filepath = resolve_dataset_path(f"designspaces/{filename}")
+    if not filepath:
+        return jsonify({'success': False, 'error': 'File not found.'}), 404
+    design_space_dir = os.path.dirname(filepath)
     
     # Security check
     if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
@@ -418,4 +427,3 @@ def save_design_space_data(filename):
     except Exception as e:
         logger.error(f"Error saving design space data: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-

@@ -11,11 +11,12 @@ import hashlib
 import logging
 import numpy as np
 import pandas as pd
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, abort
 from werkzeug.utils import secure_filename
 
 from app.database import db, Project, Cycle, Sample
 from app.utils.plot_generator import PlotGenerator
+from app.utils.session_store import get_session_id, resolve_dataset_path
 
 results_bp = Blueprint('results', __name__, url_prefix='/api/results')
 logger = logging.getLogger(__name__)
@@ -27,6 +28,22 @@ TSNE_EXCLUDE_HINTS = {
     'selected_for_lab', 'cycle_number', 'result_sample_id', 'cost'
 }
 TSNE_TARGET_HINTS = ['target', 'strength', 'slump', 'mpa', 'measured_', 'prediction_error_']
+
+
+def _get_session_project_or_404(project_id):
+    project = Project.query.filter_by(id=project_id, session_id=get_session_id()).first()
+    if not project:
+        abort(404)
+    return project
+
+
+def _get_session_sample_or_404(sample_id):
+    sample = Sample.query.get_or_404(sample_id)
+    cycle = db.session.get(Cycle, sample.cycle_id)
+    project = db.session.get(Project, cycle.project_id) if cycle else None
+    if not project or project.session_id != get_session_id():
+        abort(404)
+    return sample
 
 
 def _value_matches(series, value):
@@ -383,7 +400,7 @@ def _build_results_tsne_payload(df, feature_columns, lab_result_columns, warning
 @results_bp.route('/projects', methods=['GET'])
 def get_projects():
     """List all projects."""
-    projects = Project.query.order_by(Project.created_at.desc()).all()
+    projects = Project.query.filter_by(session_id=get_session_id()).order_by(Project.created_at.desc()).all()
     return jsonify({
         'success': True,
         'projects': [p.to_dict() for p in projects]
@@ -396,17 +413,17 @@ def create_project():
     data = request.get_json()
     
     name = data.get('name')
-    dataset_path = data.get('dataset_path')
+    dataset_path = resolve_dataset_path(data.get('dataset_path'), must_exist=False)
     
     if not name or not dataset_path:
         return jsonify({'success': False, 'error': 'Name and dataset_path are required'}), 400
     
     # Check if project with same name exists
-    existing = Project.query.filter_by(name=name).first()
+    existing = Project.query.filter_by(name=name, session_id=get_session_id()).first()
     if existing:
         return jsonify({'success': False, 'error': f'Project "{name}" already exists'}), 400
     
-    project = Project(name=name, dataset_path=dataset_path)
+    project = Project(name=name, dataset_path=dataset_path, session_id=get_session_id())
     db.session.add(project)
     db.session.commit()
     
@@ -419,7 +436,7 @@ def create_project():
 @results_bp.route('/projects/<int:project_id>', methods=['GET'])
 def get_project(project_id):
     """Get a project with its cycles."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     data = project.to_dict()
     data['cycles'] = [c.to_dict(include_samples=True) for c in project.cycles]
@@ -433,7 +450,7 @@ def get_project(project_id):
 @results_bp.route('/projects/<int:project_id>/tsne', methods=['GET'])
 def get_project_tsne(project_id):
     """Return a project-level t-SNE map with cycle and lab-result overlays."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
 
     if not project.dataset_path or not os.path.exists(project.dataset_path):
         return jsonify({'success': False, 'error': 'Dataset file not found for this project.'}), 404
@@ -484,7 +501,7 @@ def get_project_tsne(project_id):
 @results_bp.route('/projects/<int:project_id>', methods=['DELETE'])
 def delete_project(project_id):
     """Delete a project and all its cycles/samples."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     db.session.delete(project)
     db.session.commit()
@@ -499,7 +516,7 @@ def delete_project(project_id):
 @results_bp.route('/projects/<int:project_id>/cycles', methods=['GET'])
 def get_cycles(project_id):
     """List all cycles for a project."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     cycles = Cycle.query.filter_by(project_id=project_id)\
                         .order_by(Cycle.cycle_number.desc()).all()
@@ -525,12 +542,12 @@ def create_cycle():
     if not samples_data:
         return jsonify({'success': False, 'error': 'At least one sample is required'}), 400
     
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     # Auto-set dataset_path if not already set
     dataset_path = data.get('dataset_path')
     if dataset_path and (not project.dataset_path or project.dataset_path == ''):
-        project.dataset_path = dataset_path
+        project.dataset_path = resolve_dataset_path(dataset_path, must_exist=False) or project.dataset_path
         db.session.commit()
     
     # Determine the next cycle number
@@ -579,7 +596,7 @@ def create_cycle():
 @results_bp.route('/samples/<int:sample_id>', methods=['PUT'])
 def update_sample(sample_id):
     """Update a sample with lab results."""
-    sample = Sample.query.get_or_404(sample_id)
+    sample = _get_session_sample_or_404(sample_id)
     data = request.get_json()
     
     if 'lab_results' in data:
@@ -599,7 +616,7 @@ def update_sample(sample_id):
 @results_bp.route('/samples/<int:sample_id>', methods=['DELETE'])
 def delete_sample(sample_id):
     """Delete a sample from a cycle."""
-    sample = Sample.query.get_or_404(sample_id)
+    sample = _get_session_sample_or_404(sample_id)
     
     db.session.delete(sample)
     db.session.commit()
@@ -613,7 +630,7 @@ def delete_sample(sample_id):
 @results_bp.route('/samples/<int:sample_id>/sync', methods=['POST'])
 def sync_sample_to_csv(sample_id):
     """Sync lab results back to the original CSV using IDX_SAMPLE."""
-    sample = Sample.query.get_or_404(sample_id)
+    sample = _get_session_sample_or_404(sample_id)
 
     try:
         sync_result = _sync_sample_lab_results(sample)
@@ -654,6 +671,11 @@ def sync_batch_to_csv():
         if not sample:
             errors.append(f"Sample {sample_id} not found")
             continue
+        cycle = db.session.get(Cycle, sample.cycle_id)
+        project = db.session.get(Project, cycle.project_id) if cycle else None
+        if not project or project.session_id != get_session_id():
+            errors.append(f"Sample {sample_id} not found")
+            continue
 
         try:
             sync_result = _sync_sample_lab_results(sample)
@@ -686,7 +708,7 @@ def get_plot_data():
     if not project_id:
         return jsonify({'success': False, 'error': 'project_id is required'}), 400
     
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     plot_data = {
         'cycles': [],

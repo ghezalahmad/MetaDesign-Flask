@@ -10,6 +10,7 @@ SQLite database models using Flask-SQLAlchemy for tracking:
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import json
+from sqlalchemy import inspect, text
 
 db = SQLAlchemy()
 
@@ -21,6 +22,7 @@ class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
     dataset_path = db.Column(db.String(512), nullable=False)
+    session_id = db.Column(db.String(64), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     active_scenario_id = db.Column(db.Integer, db.ForeignKey('scenarios.id', use_alter=True), nullable=True)
     
@@ -34,6 +36,7 @@ class Project(db.Model):
             'id': self.id,
             'name': self.name,
             'dataset_path': self.dataset_path,
+            'session_id': self.session_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'cycle_count': len(self.cycles),
             'active_scenario_id': self.active_scenario_id
@@ -214,3 +217,8 @@ def init_db(app):
     db.init_app(app)
     with app.app_context():
         db.create_all()
+        inspector = inspect(db.engine)
+        project_columns = {column['name'] for column in inspector.get_columns('projects')}
+        if 'session_id' not in project_columns:
+            db.session.execute(text('ALTER TABLE projects ADD COLUMN session_id VARCHAR(64)'))
+            db.session.commit()

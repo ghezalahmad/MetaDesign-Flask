@@ -9,6 +9,7 @@ import pandas as pd
 from flask import Blueprint, request, jsonify, session
 from werkzeug.utils import secure_filename
 from app.utils.settings_manager import SettingsManager
+from app.utils.session_store import get_session_upload_dir
 
 uploads_bp = Blueprint('uploads', __name__)
 logger = logging.getLogger(__name__)
@@ -40,8 +41,7 @@ def upload_data():
         })
 
     filename = secure_filename(file.filename)
-    upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
-    os.makedirs(upload_folder, exist_ok=True)
+    upload_folder = get_session_upload_dir(create=True)
 
     filepath = os.path.join(upload_folder, filename)
     file.save(filepath)
@@ -71,4 +71,3 @@ def upload_data():
         if os.path.exists(filepath):
             os.remove(filepath)
         return jsonify({'success': False, 'error': f"Failed to read file: {str(e)}"})
-

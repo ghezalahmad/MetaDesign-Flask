@@ -11,6 +11,8 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import logging
+from flask import has_request_context
+from app.utils.session_store import get_session_id, get_session_trajectory_path
 
 
 class TrajectoryTracker:
@@ -21,10 +23,40 @@ class TrajectoryTracker:
     "Training-Free Active Learning Framework in Materials Science with Large Language Models"
     """
     
-    # Class-level storage (persists across requests in same Flask process)
-    _trajectory_history = []
-    _feature_columns = []
+    # Class-level storage, isolated by browser session.
+    _trajectory_history_by_key = {}
+    _feature_columns_by_key = {}
+    _loaded_keys = set()
     _save_path = Path("data/trajectory_history.json")
+
+    @classmethod
+    def _state_key(cls):
+        return get_session_id() if has_request_context() else "global"
+
+    @classmethod
+    def _path_for_key(cls, key):
+        if has_request_context() and key != "global":
+            return get_session_trajectory_path()
+        return cls._save_path
+
+    @classmethod
+    def _ensure_loaded(cls, key=None):
+        key = key or cls._state_key()
+        if key not in cls._loaded_keys:
+            cls.load_from_file(key=key)
+        cls._trajectory_history_by_key.setdefault(key, [])
+        cls._feature_columns_by_key.setdefault(key, [])
+        return key
+
+    @classmethod
+    def _history(cls, key=None):
+        key = cls._ensure_loaded(key)
+        return cls._trajectory_history_by_key[key]
+
+    @classmethod
+    def _feature_columns(cls, key=None):
+        key = cls._ensure_loaded(key)
+        return cls._feature_columns_by_key[key]
     
     @classmethod
     def add_point(cls, iteration: int, selected_row: pd.Series, 
@@ -38,7 +70,8 @@ class TrajectoryTracker:
             feature_columns: List of feature column names for distance calculation
             mode: Active learning mode (ML_MODE, LLM_AGENT_MODE, HYBRID_MODE)
         """
-        cls._feature_columns = feature_columns
+        key = cls._ensure_loaded()
+        cls._feature_columns_by_key[key] = feature_columns
         
         # Extract feature values
         feature_values = {}
@@ -56,23 +89,23 @@ class TrajectoryTracker:
             "utility": float(selected_row.get('Utility', 0)) if 'Utility' in selected_row else 0
         }
         
-        cls._trajectory_history.append(point)
+        cls._trajectory_history_by_key[key].append(point)
         logging.info(f"📍 Trajectory: Added point {iteration} ({mode})")
         
         # Auto-save for persistence
-        cls.save_to_file()
+        cls.save_to_file(key=key)
         
         return point
     
     @classmethod
     def get_trajectory(cls) -> list:
         """Get the full trajectory history."""
-        return cls._trajectory_history.copy()
+        return cls._history().copy()
     
     @classmethod
     def get_iteration_count(cls) -> int:
         """Get the current iteration count."""
-        return len(cls._trajectory_history)
+        return len(cls._history())
     
     @classmethod
     def calculate_cumulative_distance(cls) -> list:
@@ -82,20 +115,22 @@ class TrajectoryTracker:
         Returns:
             List of cumulative distances for each iteration
         """
-        if len(cls._trajectory_history) < 2:
-            return [0.0] * len(cls._trajectory_history)
+        history = cls._history()
+        feature_columns = cls._feature_columns()
+        if len(history) < 2:
+            return [0.0] * len(history)
         
         # Extract feature vectors
         feature_vectors = []
-        for point in cls._trajectory_history:
+        for point in history:
             vec = []
-            for col in cls._feature_columns:
+            for col in feature_columns:
                 val = point['features'].get(col)
                 vec.append(val if val is not None else 0.0)
             feature_vectors.append(np.array(vec))
         
         if not feature_vectors:
-            return [0.0] * len(cls._trajectory_history)
+            return [0.0] * len(history)
         
         # Standardize features (like the paper)
         all_features = np.array(feature_vectors)
@@ -119,58 +154,70 @@ class TrajectoryTracker:
         """Get summary statistics for the trajectory."""
         distances = cls.calculate_cumulative_distance()
         
+        history = cls._history()
         return {
-            "total_iterations": len(cls._trajectory_history),
+            "total_iterations": len(history),
             "total_distance": distances[-1] if distances else 0.0,
             "cumulative_distances": distances,
-            "modes_used": list(set(p['mode'] for p in cls._trajectory_history)),
-            "trajectory": cls._trajectory_history
+            "modes_used": list(set(p['mode'] for p in history)),
+            "trajectory": history
         }
     
     @classmethod
     def clear(cls):
         """Clear the trajectory history."""
-        cls._trajectory_history = []
-        cls._feature_columns = []
+        key = cls._ensure_loaded()
+        cls._trajectory_history_by_key[key] = []
+        cls._feature_columns_by_key[key] = []
         logging.info("🗑️ Trajectory: Cleared history")
         
         # Remove saved file
-        if cls._save_path.exists():
-            cls._save_path.unlink()
+        save_path = cls._path_for_key(key)
+        if save_path.exists():
+            save_path.unlink()
     
     @classmethod
-    def save_to_file(cls):
+    def save_to_file(cls, key=None):
         """Save trajectory to JSON file."""
         try:
-            cls._save_path.parent.mkdir(parents=True, exist_ok=True)
+            key = cls._ensure_loaded(key)
+            save_path = cls._path_for_key(key)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
             
             data = {
-                "feature_columns": cls._feature_columns,
-                "trajectory": cls._trajectory_history
+                "feature_columns": cls._feature_columns_by_key.get(key, []),
+                "trajectory": cls._trajectory_history_by_key.get(key, [])
             }
             
-            with open(cls._save_path, 'w') as f:
+            with open(save_path, 'w') as f:
                 json.dump(data, f, indent=2)
                 
         except Exception as e:
             logging.warning(f"⚠️ Could not save trajectory: {e}")
     
     @classmethod
-    def load_from_file(cls):
+    def load_from_file(cls, key=None):
         """Load trajectory from JSON file."""
+        key = key or cls._state_key()
+        save_path = cls._path_for_key(key)
         try:
-            if cls._save_path.exists():
-                with open(cls._save_path, 'r') as f:
+            if save_path.exists():
+                with open(save_path, 'r') as f:
                     data = json.load(f)
                 
-                cls._feature_columns = data.get('feature_columns', [])
-                cls._trajectory_history = data.get('trajectory', [])
-                logging.info(f"📂 Trajectory: Loaded {len(cls._trajectory_history)} points")
+                cls._feature_columns_by_key[key] = data.get('feature_columns', [])
+                cls._trajectory_history_by_key[key] = data.get('trajectory', [])
+                logging.info(f"📂 Trajectory: Loaded {len(cls._trajectory_history_by_key[key])} points")
+            else:
+                cls._feature_columns_by_key[key] = []
+                cls._trajectory_history_by_key[key] = []
+            cls._loaded_keys.add(key)
                 
         except Exception as e:
             logging.warning(f"⚠️ Could not load trajectory: {e}")
-            cls._trajectory_history = []
-            cls._feature_columns = []
+            cls._trajectory_history_by_key[key] = []
+            cls._feature_columns_by_key[key] = []
+            cls._loaded_keys.add(key)
 
 
 # Load existing trajectory on module import for persistence

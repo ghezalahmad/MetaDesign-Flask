@@ -10,6 +10,7 @@ def _make_app(tmp_path):
     app = Flask(__name__)
     app.config.update(
         TESTING=True,
+        SECRET_KEY="test-secret",
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{tmp_path / 'results-test.db'}",
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
     )
@@ -21,7 +22,7 @@ def _make_app(tmp_path):
 
 
 def _create_sample(dataset_path, idx_sample, row_data, lab_results, predictions=None):
-    project = Project(name="Closed Loop Test", dataset_path=str(dataset_path))
+    project = Project(name="Closed Loop Test", dataset_path=str(dataset_path), session_id="test-session")
     db.session.add(project)
     db.session.flush()
 

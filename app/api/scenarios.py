@@ -5,11 +5,30 @@ Handles project management with scenarios for experimental planning.
 """
 
 import os
-import glob
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, abort
 from ..database import db, Project, Scenario, Cycle
+from app.utils.session_store import (
+    get_session_id,
+    list_session_and_shared_datasets,
+    resolve_dataset_path,
+)
 
 scenarios_bp = Blueprint('scenarios', __name__, url_prefix='/api/scenarios')
+
+
+def _get_session_project_or_404(project_id):
+    project = Project.query.filter_by(id=project_id, session_id=get_session_id()).first()
+    if not project:
+        abort(404)
+    return project
+
+
+def _get_session_scenario_or_404(scenario_id):
+    scenario = Scenario.query.get_or_404(scenario_id)
+    project = Project.query.filter_by(id=scenario.project_id, session_id=get_session_id()).first()
+    if not project:
+        abort(404)
+    return scenario, project
 
 
 # ============================================================
@@ -19,53 +38,9 @@ scenarios_bp = Blueprint('scenarios', __name__, url_prefix='/api/scenarios')
 @scenarios_bp.route('/datasets', methods=['GET'])
 def list_available_datasets():
     """List all available datasets from design spaces and uploaded files."""
-    data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
-    designspaces_dir = os.path.join(data_dir, 'designspaces')
-    
-    datasets = []
-    
-    # 1. Get design space files
-    if os.path.exists(designspaces_dir):
-        for filepath in glob.glob(os.path.join(designspaces_dir, '*.csv')):
-            filename = os.path.basename(filepath)
-            # Get file size
-            size_bytes = os.path.getsize(filepath)
-            size_kb = round(size_bytes / 1024, 1)
-            
-            datasets.append({
-                'name': filename,
-                'path': os.path.abspath(filepath),
-                'source': 'Design Space',
-                'size_kb': size_kb,
-                'icon': 'bi-grid-3x3-gap'
-            })
-    
-    # 2. Get uploaded datasets from data/ directory (excluding design spaces)
-    if os.path.exists(data_dir):
-        for ext in ['*.csv', '*.xlsx', '*.xls']:
-            for filepath in glob.glob(os.path.join(data_dir, ext)):
-                filename = os.path.basename(filepath)
-                # Skip non-dataset files
-                if filename in ['scenarios.csv', 'trajectory_history.json']:
-                    continue
-                
-                size_bytes = os.path.getsize(filepath)
-                size_kb = round(size_bytes / 1024, 1)
-                
-                datasets.append({
-                    'name': filename,
-                    'path': os.path.abspath(filepath),
-                    'source': 'Uploaded',
-                    'size_kb': size_kb,
-                    'icon': 'bi-file-earmark-spreadsheet'
-                })
-    
-    # Sort by source (Design Space first), then by name
-    datasets.sort(key=lambda x: (0 if x['source'] == 'Design Space' else 1, x['name']))
-    
     return jsonify({
         'success': True,
-        'datasets': datasets
+        'datasets': list_session_and_shared_datasets()
     })
 
 
@@ -81,7 +56,7 @@ def get_dataset_stats():
     import pandas as pd
     
     data = request.get_json()
-    dataset_path = data.get('dataset_path', '')
+    dataset_path = resolve_dataset_path(data.get('dataset_path', ''))
     
     if not dataset_path or not os.path.exists(dataset_path):
         return jsonify({
@@ -147,7 +122,7 @@ def get_dataset_stats():
 @scenarios_bp.route('/projects', methods=['GET'])
 def get_projects():
     """List all projects with their scenarios."""
-    projects = Project.query.order_by(Project.created_at.desc()).all()
+    projects = Project.query.filter_by(session_id=get_session_id()).order_by(Project.created_at.desc()).all()
     
     result = []
     for p in projects:
@@ -166,17 +141,17 @@ def create_project():
     """Create a new project."""
     data = request.get_json()
     name = data.get('name', '').strip()
-    dataset_path = data.get('dataset_path', '').strip()
+    dataset_path = resolve_dataset_path(data.get('dataset_path', '').strip(), must_exist=False) or ''
     
     if not name:
         return jsonify({'success': False, 'error': 'Project name is required'}), 400
     
     # Check if project with same name exists
-    existing = Project.query.filter_by(name=name).first()
+    existing = Project.query.filter_by(name=name, session_id=get_session_id()).first()
     if existing:
         return jsonify({'success': False, 'error': 'Project with this name already exists'}), 400
     
-    project = Project(name=name, dataset_path=dataset_path)
+    project = Project(name=name, dataset_path=dataset_path, session_id=get_session_id())
     db.session.add(project)
     db.session.commit()
     
@@ -189,7 +164,7 @@ def create_project():
 @scenarios_bp.route('/projects/<int:project_id>', methods=['GET'])
 def get_project(project_id):
     """Get a project with its scenarios and progress."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     data = project.to_dict(include_scenarios=True)
     data['progress'] = project.get_progress()
@@ -204,13 +179,13 @@ def get_project(project_id):
 @scenarios_bp.route('/projects/<int:project_id>', methods=['PUT'])
 def update_project(project_id):
     """Update a project."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     data = request.get_json()
     
     if 'name' in data:
         project.name = data['name'].strip()
     if 'dataset_path' in data:
-        project.dataset_path = data['dataset_path'].strip()
+        project.dataset_path = resolve_dataset_path(data['dataset_path'].strip(), must_exist=False) or ''
     
     db.session.commit()
     
@@ -223,7 +198,7 @@ def update_project(project_id):
 @scenarios_bp.route('/projects/<int:project_id>', methods=['DELETE'])
 def delete_project(project_id):
     """Delete a project and all its scenarios/cycles."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     db.session.delete(project)
     db.session.commit()
@@ -238,7 +213,7 @@ def delete_project(project_id):
 @scenarios_bp.route('/projects/<int:project_id>/scenarios', methods=['GET'])
 def get_scenarios(project_id):
     """Get all scenarios for a project."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     scenarios = Scenario.query.filter_by(project_id=project_id).all()
     
@@ -253,7 +228,7 @@ def get_scenarios(project_id):
 @scenarios_bp.route('/projects/<int:project_id>/scenarios', methods=['POST'])
 def create_scenario(project_id):
     """Create a new scenario for a project."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     data = request.get_json()
     
     name = data.get('name', '').strip()
@@ -289,7 +264,7 @@ def create_scenario(project_id):
 @scenarios_bp.route('/<int:scenario_id>', methods=['GET'])
 def get_scenario(scenario_id):
     """Get a single scenario."""
-    scenario = Scenario.query.get_or_404(scenario_id)
+    scenario, _ = _get_session_scenario_or_404(scenario_id)
     
     return jsonify({
         'success': True,
@@ -300,7 +275,7 @@ def get_scenario(scenario_id):
 @scenarios_bp.route('/<int:scenario_id>', methods=['PUT'])
 def update_scenario(scenario_id):
     """Update a scenario."""
-    scenario = Scenario.query.get_or_404(scenario_id)
+    scenario, _ = _get_session_scenario_or_404(scenario_id)
     data = request.get_json()
     
     if 'name' in data:
@@ -331,8 +306,7 @@ def update_scenario(scenario_id):
 @scenarios_bp.route('/<int:scenario_id>', methods=['DELETE'])
 def delete_scenario(scenario_id):
     """Delete a scenario."""
-    scenario = Scenario.query.get_or_404(scenario_id)
-    project = Project.query.get(scenario.project_id)
+    scenario, project = _get_session_scenario_or_404(scenario_id)
     
     # If this was the active scenario, clear it
     if project and project.active_scenario_id == scenario_id:
@@ -347,8 +321,7 @@ def delete_scenario(scenario_id):
 @scenarios_bp.route('/<int:scenario_id>/activate', methods=['POST'])
 def activate_scenario(scenario_id):
     """Set a scenario as the active scenario for its project."""
-    scenario = Scenario.query.get_or_404(scenario_id)
-    project = Project.query.get_or_404(scenario.project_id)
+    scenario, project = _get_session_scenario_or_404(scenario_id)
     
     project.active_scenario_id = scenario_id
     db.session.commit()
@@ -363,8 +336,7 @@ def activate_scenario(scenario_id):
 @scenarios_bp.route('/<int:scenario_id>/deactivate', methods=['POST'])
 def deactivate_scenario(scenario_id):
     """Deactivate a scenario."""
-    scenario = Scenario.query.get_or_404(scenario_id)
-    project = Project.query.get_or_404(scenario.project_id)
+    scenario, project = _get_session_scenario_or_404(scenario_id)
     
     if project.active_scenario_id == scenario_id:
         project.active_scenario_id = None
@@ -384,7 +356,7 @@ def deactivate_scenario(scenario_id):
 @scenarios_bp.route('/projects/<int:project_id>/progress', methods=['GET'])
 def get_project_progress(project_id):
     """Get real-time progress for a project against its active scenario."""
-    project = Project.query.get_or_404(project_id)
+    project = _get_session_project_or_404(project_id)
     
     progress = project.get_progress()
     

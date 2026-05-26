@@ -134,7 +134,7 @@ class _FakeLLMAgent:
     def _build_user_prompt(self, context, history_df, params_config, prompt_style, target_config=None, strategy=None):
         return "user"
 
-    def propose_next_experiment(self, context, history_df, params_config, prompt_style, target_config=None):
+    def propose_next_experiment(self, context, history_df, params_config, prompt_style, target_config=None, strategy=None):
         return "oxide: high"
 
 

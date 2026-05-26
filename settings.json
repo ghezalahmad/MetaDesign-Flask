@@ -1,16 +1,15 @@
 {
-    "active_learning_mode": "ML_MODE",
+    "active_learning_mode": "LLM_AGENT_MODE",
     "prompt_style": "report-format",
     "hybrid_weights": {
         "w_llm": 0.4,
         "w_ml": 0.6
     },
     "alpha_value": 1.0,
-    "mistral_api_key": "",
-    "cohere_api_key": "",
     "llm_provider": "ollama",
     "ollama_model": "mistral:latest",
-    "llm_strategy": "balanced",
+    "llm_model": "claude-sonnet-4-20250514",
+    "llm_strategy": "exploit",
     "rl_weight": 0.3,
     "mlflow_enabled": true,
     "mlflow_tracking_uri": "",

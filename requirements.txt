@@ -29,6 +29,7 @@ lolopy>=1.0.0
 # Visualization
 plotly>=5.15.0
 matplotlib>=3.7.0
+streamlit>=1.32.0  # Legacy model helper modules still import streamlit logging shims
 
 # Explainability
 shapash>=2.4.0

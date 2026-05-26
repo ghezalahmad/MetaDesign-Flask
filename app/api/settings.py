@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @settings_bp.route('/api/settings', methods=['GET'])
 def get_settings():
     """Return current settings for the dashboard."""
-    settings = SettingsManager.load_settings()
+    settings = SettingsManager.strip_sensitive(SettingsManager.load_settings())
     return jsonify({'success': True, 'settings': settings})
 
 

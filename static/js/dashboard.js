@@ -253,6 +253,32 @@ document.addEventListener("DOMContentLoaded", () => {
     const hybridPanel = document.getElementById('hybrid-settings-panel');
     const mlOptionsPanel = document.getElementById('ml-options-panel');
     const llmOptionsPanel = document.getElementById('llm-options-panel');
+    const providerConfig = {
+        ollama: {
+            defaultModel: 'mistral:latest',
+            models: ['mistral:latest', 'mistral:instruct', 'llama3:latest', 'llama2:13b-chat', 'deepseek-r1:1.5b'],
+            keyLabel: 'API Key',
+            help: 'No API key needed - runs locally with Ollama.'
+        },
+        mistral_cloud: {
+            defaultModel: 'mistral-large-latest',
+            models: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest'],
+            keyLabel: 'Mistral API Key',
+            help: 'Get your key at console.mistral.ai. The key is used only for this run and is not saved.'
+        },
+        openai: {
+            defaultModel: 'gpt-5-mini',
+            models: ['gpt-5-mini', 'gpt-5', 'gpt-4o-mini', 'gpt-4o'],
+            keyLabel: 'OpenAI API Key',
+            help: 'Get your key from the OpenAI platform. The key is used only for this run and is not saved.'
+        },
+        anthropic: {
+            defaultModel: 'claude-sonnet-4-20250514',
+            models: ['claude-sonnet-4-20250514', 'claude-3-7-sonnet-20250219', 'claude-3-5-haiku-20241022'],
+            keyLabel: 'Anthropic API Key',
+            help: 'Get your key from the Anthropic Console. The key is used only for this run and is not saved.'
+        }
+    };
 
     function updateSettingsVisibility() {
         // Find checked mode
@@ -303,6 +329,10 @@ document.addEventListener("DOMContentLoaded", () => {
                         for (const r of styleRadios) {
                             r.checked = (r.value === s.prompt_style);
                         }
+                        const cloudStyleRadios = document.getElementsByName('prompt_style_cloud');
+                        for (const r of cloudStyleRadios) {
+                            r.checked = (r.value === s.prompt_style);
+                        }
                     }
 
                     // Apply hybrid weights
@@ -327,10 +357,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         }
                     }
 
-                    // Apply Mistral API key
-                    const apiKeyInput = document.getElementById('mistral_api_key');
-                    if (apiKeyInput && s.mistral_api_key) {
-                        apiKeyInput.value = s.mistral_api_key;
+                    const cloudModelSelect = document.getElementById('llm_model');
+                    if (cloudModelSelect && s.llm_model) {
+                        cloudModelSelect.dataset.pendingModel = s.llm_model;
                     }
 
                     // Restore previously uploaded dataset
@@ -351,6 +380,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
 
                     updateSettingsVisibility();
+                    updateProviderVisibility();
                     console.log("✅ Settings loaded from server");
                 }
             })
@@ -364,17 +394,18 @@ document.addEventListener("DOMContentLoaded", () => {
             if (r.checked) mode = r.value;
         }
 
-        let promptStyle = "parameter-format";
-        const styleRadios = document.getElementsByName('prompt_style');
-        for (const r of styleRadios) {
-            if (r.checked) promptStyle = r.value;
-        }
-
         // Get LLM provider
         let llmProvider = 'ollama';
         const providerRadios = document.getElementsByName('llm_provider');
         for (const r of providerRadios) {
             if (r.checked) llmProvider = r.value;
+        }
+
+        let promptStyle = "parameter-format";
+        const promptGroup = llmProvider === 'ollama' ? 'prompt_style' : 'prompt_style_cloud';
+        const styleRadios = document.getElementsByName(promptGroup);
+        for (const r of styleRadios) {
+            if (r.checked) promptStyle = r.value;
         }
 
         // Get LLM strategy
@@ -390,7 +421,7 @@ document.addEventListener("DOMContentLoaded", () => {
             llm_provider: llmProvider,
             llm_strategy: llmStrategy,
             ollama_model: document.getElementById('ollama_model')?.value || 'mistral:latest',
-            mistral_api_key: document.getElementById('mistral_api_key')?.value || '',
+            llm_model: document.getElementById('llm_model')?.value || '',
             hybrid_weights: {
                 w_llm: parseFloat(document.getElementById('w_llm')?.value || 0.5),
                 w_ml: parseFloat(document.getElementById('w_ml')?.value || 0.5)
@@ -423,35 +454,61 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementsByName('prompt_style').forEach(r =>
         r.addEventListener('change', saveSettings)
     );
+    document.getElementsByName('prompt_style_cloud').forEach(r =>
+        r.addEventListener('change', saveSettings)
+    );
 
     document.getElementById('w_llm')?.addEventListener('change', saveSettings);
     document.getElementById('w_ml')?.addEventListener('change', saveSettings);
 
-    // Ollama model and Mistral API key handlers
+    // Ollama model and per-run cloud API key handlers
     document.getElementById('ollama_model')?.addEventListener('change', saveSettings);
-    document.getElementById('mistral_api_key')?.addEventListener('change', () => {
-        saveSettings();
+    document.getElementById('llm_model')?.addEventListener('change', saveSettings);
+    document.getElementById('llm_api_key')?.addEventListener('input', () => {
         validateCloudApiKey();
     });
 
     // Provider toggle handler
     const providerRadios = document.getElementsByName('llm_provider');
     const ollamaSettings = document.getElementById('ollama-settings');
-    const mistralCloudSettings = document.getElementById('mistral-cloud-settings');
+    const cloudLlmSettings = document.getElementById('cloud-llm-settings');
+
+    function getSelectedProvider() {
+        for (const r of providerRadios) {
+            if (r.checked) return r.value;
+        }
+        return 'ollama';
+    }
+
+    function updateCloudProviderFields(provider) {
+        const config = providerConfig[provider] || providerConfig.mistral_cloud;
+        const label = document.getElementById('cloud-api-key-label');
+        const help = document.getElementById('cloud-api-key-help');
+        const modelSelect = document.getElementById('llm_model');
+
+        if (label) label.textContent = config.keyLabel;
+        if (help) help.textContent = config.help;
+        if (!modelSelect) return;
+
+        const previousValue = modelSelect.value || modelSelect.dataset.pendingModel || config.defaultModel;
+        modelSelect.innerHTML = config.models
+            .map(model => `<option value="${model}">${model}</option>`)
+            .join('');
+        modelSelect.value = config.models.includes(previousValue) ? previousValue : config.defaultModel;
+        delete modelSelect.dataset.pendingModel;
+    }
 
     function updateProviderVisibility() {
-        let provider = 'ollama';
-        for (const r of providerRadios) {
-            if (r.checked) provider = r.value;
-        }
+        const provider = getSelectedProvider();
 
         if (provider === 'ollama') {
             if (ollamaSettings) ollamaSettings.style.display = 'flex';
-            if (mistralCloudSettings) mistralCloudSettings.style.display = 'none';
+            if (cloudLlmSettings) cloudLlmSettings.style.display = 'none';
             checkOllamaStatus();
         } else {
             if (ollamaSettings) ollamaSettings.style.display = 'none';
-            if (mistralCloudSettings) mistralCloudSettings.style.display = 'flex';
+            if (cloudLlmSettings) cloudLlmSettings.style.display = 'flex';
+            updateCloudProviderFields(provider);
             validateCloudApiKey();
         }
     }
@@ -484,9 +541,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Validate Cloud API key
     function validateCloudApiKey() {
-        const apiKey = document.getElementById('mistral_api_key')?.value || '';
+        const provider = getSelectedProvider();
+        const apiKey = document.getElementById('llm_api_key')?.value || '';
         const warning = document.getElementById('api-key-warning');
-        if (!apiKey.trim()) {
+        if (provider !== 'ollama' && !apiKey.trim()) {
             if (warning) warning.style.display = 'block';
         } else {
             if (warning) warning.style.display = 'none';
@@ -495,7 +553,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Toggle API key visibility
     document.getElementById('toggle-api-key')?.addEventListener('click', () => {
-        const input = document.getElementById('mistral_api_key');
+        const input = document.getElementById('llm_api_key');
         const icon = document.querySelector('#toggle-api-key i');
         if (input.type === 'password') {
             input.type = 'text';
@@ -953,9 +1011,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (r.checked) mode = r.value;
         }
 
+        const llmProvider = getSelectedProvider();
+
         // Prompt Style
         let promptStyle = "parameter-format";
-        const styleRadios = document.getElementsByName('prompt_style');
+        const promptGroup = llmProvider === 'ollama' ? 'prompt_style' : 'prompt_style_cloud';
+        const styleRadios = document.getElementsByName(promptGroup);
         for (const r of styleRadios) {
             if (r.checked) promptStyle = r.value;
         }
@@ -977,6 +1038,11 @@ document.addEventListener("DOMContentLoaded", () => {
             apriori_columns: apriori,
             acquisition_function: acquisitionFunc,
             active_learning_mode: mode,
+            llm_provider: llmProvider,
+            llm_model: llmProvider === 'ollama'
+                ? (document.getElementById('ollama_model')?.value || 'mistral:latest')
+                : (document.getElementById('llm_model')?.value || ''),
+            llm_api_key: document.getElementById('llm_api_key')?.value || '',
             prompt_style: promptStyle,
             hybrid_weights: { w_llm, w_ml },
             batch_size: batchSize,
@@ -986,11 +1052,16 @@ document.addEventListener("DOMContentLoaded", () => {
         // Store config for Excel export with metadata
         lastExperimentConfig = {
             ...payload,
+            llm_api_key: payload.llm_api_key ? '[provided for this run]' : '',
             timestamp: new Date().toISOString(),
             dataset_filename: activeDataset.filename
         };
 
-        console.log("🚀 Sending experiment request:", payload);
+        const safePayload = {
+            ...payload,
+            llm_api_key: payload.llm_api_key ? '[provided for this run]' : ''
+        };
+        console.log("🚀 Sending experiment request:", safePayload);
 
         // === IMPROVED LOADING INDICATOR ===
         runButton.disabled = true;

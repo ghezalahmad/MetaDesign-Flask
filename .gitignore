@@ -3,3 +3,4 @@ __pycache__/
 venv/
 flask_server.log
 .env
+data/sessions/

@@ -18,6 +18,7 @@ from app.utils.plot_generator import PlotGenerator
 from app.utils.settings_manager import SettingsManager
 from app.utils.trajectory_tracker import TrajectoryTracker
 from app.utils.decision_analysis import DecisionAnalyzer
+from app.utils.session_store import resolve_dataset_path
 
 run_experiment_bp = Blueprint('run_experiment', __name__)
 logger = logging.getLogger(__name__)
@@ -175,11 +176,7 @@ def run_experiment():
         dataset_filename = config.get('dataset_filename')
         
         if dataset_filename:
-            upload_folder = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
-            filepath = os.path.join(upload_folder, secure_filename(dataset_filename))
-            if not os.path.exists(filepath):
-                design_space_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'designspaces')
-                filepath = os.path.join(design_space_dir, secure_filename(dataset_filename))
+            filepath = resolve_dataset_path(secure_filename(dataset_filename))
         else:
             filepath = session.get('filepath')
 

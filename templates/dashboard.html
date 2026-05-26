@@ -102,9 +102,17 @@
                                 checked>
                             <label class="btn btn-outline-success" for="provider_local">🦙 Local (Ollama) - Free</label>
 
-                            <input type="radio" class="btn-check" name="llm_provider" id="provider_cloud"
+                            <input type="radio" class="btn-check" name="llm_provider" id="provider_mistral"
                                 value="mistral_cloud">
-                            <label class="btn btn-outline-primary" for="provider_cloud">☁️ Cloud (Mistral API)</label>
+                            <label class="btn btn-outline-primary" for="provider_mistral">Mistral API</label>
+
+                            <input type="radio" class="btn-check" name="llm_provider" id="provider_openai"
+                                value="openai">
+                            <label class="btn btn-outline-primary" for="provider_openai">OpenAI API</label>
+
+                            <input type="radio" class="btn-check" name="llm_provider" id="provider_anthropic"
+                                value="anthropic">
+                            <label class="btn btn-outline-primary" for="provider_anthropic">Claude API</label>
                         </div>
                     </div>
                 </div>
@@ -142,21 +150,24 @@
                     </div>
                 </div>
 
-                <!-- Mistral Cloud Settings -->
-                <div id="mistral-cloud-settings" class="row mb-3" style="display: none;">
+                <!-- Cloud Provider Settings -->
+                <div id="cloud-llm-settings" class="row mb-3" style="display: none;">
                     <div class="col-md-6">
-                        <label class="form-label fw-bold">Mistral API Key:</label>
+                        <label class="form-label fw-bold"><span id="cloud-api-key-label">API Key</span>:</label>
                         <div class="input-group">
-                            <input type="password" class="form-control" id="mistral_api_key"
-                                placeholder="Enter your Mistral API key">
+                            <input type="password" class="form-control" id="llm_api_key"
+                                placeholder="Enter API key for this run only">
                             <button class="btn btn-outline-secondary" type="button" id="toggle-api-key">
                                 <i class="bi bi-eye"></i>
                             </button>
                         </div>
-                        <small class="text-muted">Get your key at <a href="https://console.mistral.ai/"
-                                target="_blank">console.mistral.ai</a></small>
+                        <small class="text-muted">
+                            <span id="cloud-api-key-help">Your API key is used only for the current run and is not saved.</span>
+                        </small>
+                        <label class="form-label fw-bold mt-3">Cloud Model:</label>
+                        <select class="form-select" id="llm_model"></select>
                         <div id="api-key-warning" class="alert alert-warning mt-2" style="display: none;">
-                            ⚠️ API key is required for Cloud mode.
+                            API key is required for the selected cloud provider.
                         </div>
                     </div>
                     <div class="col-md-6">

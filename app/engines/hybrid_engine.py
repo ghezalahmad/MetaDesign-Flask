@@ -2,11 +2,25 @@
 import pandas as pd
 import numpy as np
 import logging
+import os
 from app.engines.ml_engine import MLEngine
-from app.engines.llm_agent import LLMAgent
+from app.engines.llm_agent import LLMAgent, PROVIDER_DEFAULTS
 from app.engines.semantic_matcher import SemanticMatcher
 from app.utils.settings_manager import SettingsManager
 from app.utils.trajectory_tracker import TrajectoryTracker
+
+
+LLM_ERROR_PREFIXES = (
+    "NO_API_KEY_PROVIDED",
+    "OLLAMA_NOT_RUNNING",
+    "OLLAMA_CONNECTION_ERROR",
+    "OLLAMA_ERROR",
+    "MISTRAL_ERROR",
+    "OPENAI_ERROR",
+    "ANTHROPIC_ERROR",
+    "UNKNOWN_PROVIDER",
+)
+
 
 class HybridEngine:
     """
@@ -23,7 +37,7 @@ class HybridEngine:
         """
         Main entry point for running an experiment based on the current mode.
         """
-        mode = SettingsManager.get_setting("active_learning_mode", "ML_MODE")
+        mode = config.get("active_learning_mode") or SettingsManager.get_setting("active_learning_mode", "ML_MODE")
         logging.info(f"Running Experiment in {mode}")
         
         input_columns = config.get('input_columns')
@@ -78,7 +92,7 @@ class HybridEngine:
         print("="*60)
 
         # Get LLM agent and semantic matcher
-        agent = cls._get_llm_agent()
+        agent = cls._get_llm_agent(config)
         matcher = cls._get_semantic_matcher()
 
         # Get target config for optimization direction
@@ -98,8 +112,8 @@ class HybridEngine:
         # Build context and get LLM proposal with optimization direction
         context = f"Optimize {', '.join(target_names)}"
         params_config = {col: "continuous" for col in input_columns}
-        prompt_style = SettingsManager.get_setting("prompt_style", "parameter-format")
-        llm_strategy = SettingsManager.get_setting("llm_strategy", "balanced")
+        prompt_style = config.get("prompt_style") or SettingsManager.get_setting("prompt_style", "parameter-format")
+        llm_strategy = config.get("llm_strategy") or SettingsManager.get_setting("llm_strategy", "balanced")
 
         # Build the prompt explicitly so we can capture it for the trace
         system_prompt = agent._build_system_prompt(prompt_style, llm_strategy)
@@ -115,6 +129,7 @@ class HybridEngine:
             target_config=target_config,
             strategy=llm_strategy
         )
+        cls._raise_if_llm_error(llm_proposal)
         logging.info(f"🤖 LLM Proposal: {llm_proposal[:200]}...")
 
         # Match LLM proposal to actual candidate row
@@ -166,8 +181,8 @@ class HybridEngine:
                 traceback.print_exc()
 
         # ── LLM Trace: captured for UI display ──────────────────────────
-        provider = SettingsManager.get_setting("llm_provider", "ollama")
-        model_name = SettingsManager.get_setting("ollama_model", "mistral:latest")
+        provider = getattr(agent, "provider", "unknown")
+        model_name = getattr(agent, "model", "unknown")
 
         # Capture actual matched candidate values so UI can show proposed vs actual
         matched_candidate_values = None
@@ -227,15 +242,15 @@ class HybridEngine:
         )
 
         # 2. Get LLM proposal with optimization direction
-        agent = cls._get_llm_agent()
+        agent = cls._get_llm_agent(config)
         target_config = config.get('target_columns', [])
-        llm_strategy = SettingsManager.get_setting("llm_strategy", "balanced")
+        llm_strategy = config.get("llm_strategy") or SettingsManager.get_setting("llm_strategy", "balanced")
 
         labeled_data = data.dropna(subset=target_names)
         history_df = labeled_data[input_columns + target_names]
         context = f"Optimize {', '.join(target_names)}"
         params_config = {col: "continuous" for col in input_columns}
-        prompt_style = SettingsManager.get_setting("prompt_style", "parameter-format")
+        prompt_style = config.get("prompt_style") or SettingsManager.get_setting("prompt_style", "parameter-format")
 
         # Build prompt explicitly for trace capture
         system_prompt = agent._build_system_prompt(prompt_style, llm_strategy)
@@ -247,12 +262,14 @@ class HybridEngine:
 
         llm_proposal_text = agent.propose_next_experiment(
             context, history_df, params_config, prompt_style,
-            target_config=target_config
+            target_config=target_config,
+            strategy=llm_strategy
         )
+        cls._raise_if_llm_error(llm_proposal_text)
         logging.info(f"🤖 LLM Proposal: {llm_proposal_text[:200]}...")
 
         # 3. Hybrid Fusion: w_llm * semantic + w_ml * ucb
-        weights = SettingsManager.get_setting("hybrid_weights", {"w_llm": 0.5, "w_ml": 0.5})
+        weights = config.get("hybrid_weights") or SettingsManager.get_setting("hybrid_weights", {"w_llm": 0.5, "w_ml": 0.5})
         w_llm = weights.get("w_llm", 0.5)
         w_ml = weights.get("w_ml", 0.5)
 
@@ -303,8 +320,8 @@ class HybridEngine:
         top_semantic = float(ml_results_df.loc[top_idx, 'Semantic_Score']) if top_idx is not None else None
         top_ml_util = float(ml_results_df.loc[top_idx, 'ML_Utility']) if top_idx is not None else None
 
-        provider = SettingsManager.get_setting("llm_provider", "ollama")
-        model_name = SettingsManager.get_setting("ollama_model", "mistral:latest")
+        provider = getattr(agent, "provider", "unknown")
+        model_name = getattr(agent, "model", "unknown")
         ml_results_df.attrs['llm_trace'] = {
             'mode': 'HYBRID_MODE',
             'provider': provider,
@@ -328,23 +345,57 @@ class HybridEngine:
         return ml_results_df
 
     @classmethod
-    def _get_llm_agent(cls):
-        """Helper to create LLM agent from settings."""
-        llm_provider = SettingsManager.get_setting("llm_provider", "ollama")
-        ollama_model = SettingsManager.get_setting("ollama_model", "mistral:latest")
-        # Use get_api_key: checks MISTRAL_API_KEY env var first, then settings file
-        mistral_api_key = SettingsManager.get_api_key("mistral_api_key", "MISTRAL_API_KEY")
-        
+    def _get_llm_agent(cls, config=None):
+        """Create LLM agent from local settings, per-run keys, or deployment secrets."""
+        config = config or {}
+        llm_provider = config.get("llm_provider") or SettingsManager.get_setting("llm_provider", "ollama")
+        if llm_provider not in PROVIDER_DEFAULTS:
+            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+
+        default_model = PROVIDER_DEFAULTS.get(llm_provider, PROVIDER_DEFAULTS["ollama"])["model"]
+        if llm_provider == "ollama":
+            llm_model = config.get("llm_model") or SettingsManager.get_setting("ollama_model", default_model)
+        else:
+            llm_model = config.get("llm_model") or SettingsManager.get_setting(f"{llm_provider}_model", default_model)
+
+        env_var_by_provider = {
+            "mistral_cloud": "MISTRAL_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }
+        per_run_key = (
+            config.get("llm_api_key")
+            or config.get("mistral_api_key")
+            or config.get("openai_api_key")
+            or config.get("anthropic_api_key")
+            or ""
+        )
+        env_key = os.environ.get(env_var_by_provider.get(llm_provider, ""), "")
+        api_key = per_run_key or env_key
+
+        if llm_provider != "ollama" and not api_key:
+            key_label = PROVIDER_DEFAULTS[llm_provider]["key_label"]
+            raise ValueError(f"{key_label} is required for cloud LLM mode.")
+
         return LLMAgent(
             provider=llm_provider,
-            model=ollama_model,
-            api_key=mistral_api_key
+            model=llm_model,
+            api_key=api_key
         )
+
+    @staticmethod
+    def _raise_if_llm_error(response_text):
+        """Turn provider error strings into user-visible validation errors."""
+        if not isinstance(response_text, str):
+            return
+        stripped = response_text.strip()
+        if any(stripped.startswith(prefix) for prefix in LLM_ERROR_PREFIXES):
+            raise ValueError(stripped)
 
     @classmethod
     def _get_semantic_matcher(cls):
         """Helper to create semantic matcher from settings."""
-        cohere_key = SettingsManager.get_setting("cohere_api_key", "")
+        cohere_key = os.environ.get("COHERE_API_KEY", "") or SettingsManager.get_setting("cohere_api_key", "")
         return SemanticMatcher(api_key=cohere_key)
 
     @classmethod

@@ -9,6 +9,7 @@ import json
 import logging
 from flask import Blueprint, render_template, session, send_from_directory, abort
 from werkzeug.utils import secure_filename
+from app.utils.session_store import resolve_dataset_path
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -41,8 +42,10 @@ def results():
 def download_data_file(filename):
     """Download a dataset file from the data directory."""
     filename = secure_filename(filename)
-    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-    filepath = os.path.join(data_dir, filename)
+    filepath = resolve_dataset_path(filename)
+    if not filepath:
+        abort(404)
+    data_dir = os.path.dirname(filepath)
     
     # Verify path is within allowed directory
     if not os.path.abspath(filepath).startswith(os.path.abspath(data_dir)):
