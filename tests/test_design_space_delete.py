@@ -1,0 +1,95 @@
+from flask import Flask
+
+from app.api import design_space as design_space_module
+from app.api.design_space import design_space_bp
+from app.utils import session_store
+
+
+def _make_design_space_app(tmp_path, monkeypatch):
+    session_root = tmp_path / "sessions"
+    shared_root = tmp_path / "designspaces"
+    shared_root.mkdir(parents=True)
+
+    monkeypatch.setattr(session_store, "SESSION_ROOT_DIR", session_root)
+    monkeypatch.setattr(design_space_module, "SHARED_DESIGNSPACE_DIR", shared_root)
+
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="test-secret")
+    app.register_blueprint(design_space_bp)
+    return app, session_root, shared_root
+
+
+def _set_session_id(client, session_id="session-a"):
+    with client.session_transaction() as sess:
+        sess[session_store.SESSION_ID_KEY] = session_id
+
+
+def test_delete_session_design_space(tmp_path, monkeypatch):
+    app, session_root, _ = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    session_file = session_root / "session-a" / "designspaces" / "session.csv"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_text("Idx_Sample,target\n1,\n")
+
+    response = client.delete("/delete-design-space/session.csv?scope=session")
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert not session_file.exists()
+
+
+def test_delete_shared_design_space_allowed_locally(tmp_path, monkeypatch):
+    app, _, shared_root = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    shared_file = shared_root / "shared.csv"
+    shared_file.write_text("Idx_Sample,target\n1,\n")
+
+    response = client.delete(
+        "/delete-design-space/shared.csv?scope=shared",
+        base_url="http://127.0.0.1:5000",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert not shared_file.exists()
+
+
+def test_delete_shared_design_space_denied_for_public_host(tmp_path, monkeypatch):
+    app, _, shared_root = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    shared_file = shared_root / "shared.csv"
+    shared_file.write_text("Idx_Sample,target\n1,\n")
+
+    response = client.delete(
+        "/delete-design-space/shared.csv?scope=shared",
+        base_url="https://ghezalahmad-meta-design.hf.space",
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["success"] is False
+    assert shared_file.exists()
+
+
+def test_edit_shared_design_space_denied_for_public_host(tmp_path, monkeypatch):
+    app, _, shared_root = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    shared_file = shared_root / "shared.csv"
+    shared_file.write_text("Idx_Sample,target\n1,\n")
+
+    response = client.post(
+        "/api/design-space-data/shared.csv?scope=shared",
+        json={"column": "target", "updates": {"0": "2.5"}},
+        base_url="https://ghezalahmad-meta-design.hf.space",
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["success"] is False
+    assert shared_file.read_text() == "Idx_Sample,target\n1,\n"

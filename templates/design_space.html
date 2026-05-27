@@ -103,16 +103,29 @@
             <ul class="list-group" id="design-space-history">
                 {% for item in history %}
                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                    {{ item.name }}
+                    <span>
+                        {{ item.name }}
+                        <span class="badge bg-light text-secondary border ms-2">{{ item.source_label }}</span>
+                    </span>
                     <div>
                         <a href="{{ url_for('main.dashboard') }}?ds={{ item.name }}"
                             class="btn btn-sm btn-outline-primary">Open</a>
+                        {% if item.can_mutate %}
                         <button class="btn btn-sm btn-outline-success edit-btn"
-                            data-filename="{{ item.name }}">Edit</button>
-                        <a href="{{ url_for('design_space.download_design_space', filename=item.name) }}"
+                            data-filename="{{ item.name }}" data-scope="{{ item.scope }}">Edit</button>
+                        {% else %}
+                        <button class="btn btn-sm btn-outline-success" disabled
+                            title="Shared demo files are read-only in the public app.">Edit</button>
+                        {% endif %}
+                        <a href="{{ url_for('design_space.download_design_space', filename=item.name, scope=item.scope) }}"
                             class="btn btn-sm btn-outline-secondary">Download</a>
+                        {% if item.can_mutate %}
                         <button class="btn btn-sm btn-outline-danger delete-btn"
-                            data-filename="{{ item.name }}">Delete</button>
+                            data-filename="{{ item.name }}" data-scope="{{ item.scope }}">Delete</button>
+                        {% else %}
+                        <button class="btn btn-sm btn-outline-danger" disabled
+                            title="Shared demo files are read-only in the public app.">Delete</button>
+                        {% endif %}
                     </div>
                 </li>
                 {% else %}
@@ -299,8 +312,9 @@
         document.getElementById('design-space-history').addEventListener('click', function (e) {
             if (e.target.classList.contains('delete-btn')) {
                 const filename = e.target.dataset.filename;
+                const scope = e.target.dataset.scope || 'session';
                 if (confirm(`Are you sure you want to delete ${filename}?`)) {
-                    fetch(`/delete-design-space/${filename}`, { method: 'DELETE' })
+                    fetch(`/delete-design-space/${encodeURIComponent(filename)}?scope=${encodeURIComponent(scope)}`, { method: 'DELETE' })
                         .then(response => response.json())
                         .then(data => {
                             if (data.success) {
@@ -647,6 +661,7 @@
         const unsavedIndicator = document.getElementById('edit-unsaved-indicator');
 
         let currentEditFilename = null;
+        let currentEditScope = 'session';
         let currentEditData = null;
         let currentEditColumns = null;
         let pendingChanges = {};
@@ -655,12 +670,14 @@
         document.getElementById('design-space-history').addEventListener('click', function (e) {
             if (e.target.classList.contains('edit-btn')) {
                 const filename = e.target.dataset.filename;
-                openEditModal(filename);
+                const scope = e.target.dataset.scope || 'session';
+                openEditModal(filename, scope);
             }
         });
 
-        function openEditModal(filename) {
+        function openEditModal(filename, scope) {
             currentEditFilename = filename;
+            currentEditScope = scope || 'session';
             pendingChanges = {};
             editFilenameDisplay.textContent = filename;
             editStatsDisplay.textContent = 'Loading...';
@@ -672,7 +689,7 @@
             editModal.show();
 
             // Fetch data from API
-            fetch(`/api/design-space-data/${filename}`)
+            fetch(`/api/design-space-data/${encodeURIComponent(filename)}?scope=${encodeURIComponent(currentEditScope)}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
@@ -816,7 +833,7 @@
                 const updates = pendingChanges[column];
 
                 savePromises.push(
-                    fetch(`/api/design-space-data/${currentEditFilename}`, {
+                    fetch(`/api/design-space-data/${encodeURIComponent(currentEditFilename)}?scope=${encodeURIComponent(currentEditScope)}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ column: column, updates: updates })

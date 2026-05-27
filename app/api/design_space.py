@@ -24,6 +24,44 @@ design_space_bp = Blueprint('design_space', __name__)
 logger = logging.getLogger(__name__)
 
 
+def _is_within_directory(filepath, directory):
+    """Return True when filepath resolves inside directory."""
+    try:
+        return os.path.commonpath([
+            os.path.abspath(str(filepath)),
+            os.path.abspath(str(directory)),
+        ]) == os.path.abspath(str(directory))
+    except ValueError:
+        return False
+
+
+def _is_local_request():
+    """Shared design-space mutation is allowed only from the local app."""
+    host = (request.host or "").lower()
+    return (
+        host.startswith("127.0.0.1")
+        or host.startswith("localhost")
+        or host.startswith("[::1]")
+        or host.startswith("::1")
+    )
+
+
+def _resolve_designspace_by_scope(filename, scope):
+    """Resolve a design-space filename within a selected storage scope."""
+    if scope == "shared":
+        design_space_dir = SHARED_DESIGNSPACE_DIR
+    elif scope == "session":
+        design_space_dir = get_session_designspace_dir(create=True)
+    else:
+        return None, None, "Invalid file scope"
+
+    filepath = os.path.join(str(design_space_dir), filename)
+    if not _is_within_directory(filepath, design_space_dir):
+        return None, None, "Access denied"
+
+    return design_space_dir, filepath, None
+
+
 def generate_feature_values(feature):
     """Generate values for a feature based on its type."""
     if feature['type'] == 'continuous':
@@ -118,12 +156,25 @@ def scenario_to_design_space():
 def design_space():
     """Design space management page."""
     history = []
-    for design_space_dir in [get_session_designspace_dir(create=True), SHARED_DESIGNSPACE_DIR]:
+    seen = set()
+    can_mutate_shared = _is_local_request()
+    roots = [
+        ("session", "Current session", get_session_designspace_dir(create=True)),
+        ("shared", "Shared", SHARED_DESIGNSPACE_DIR),
+    ]
+    for scope, source_label, design_space_dir in roots:
         if os.path.exists(design_space_dir):
             for filename in sorted(os.listdir(design_space_dir), reverse=True):
-                if filename.endswith('.csv'):
+                if filename.endswith('.csv') and filename not in seen:
+                    seen.add(filename)
                     filepath = os.path.join(design_space_dir, filename)
-                    history.append({'name': filename, 'path': filepath})
+                    history.append({
+                        'name': filename,
+                        'path': filepath,
+                        'scope': scope,
+                        'source_label': source_label,
+                        'can_mutate': scope == "session" or can_mutate_shared,
+                    })
     return render_template('design_space.html', history=history)
 
 
@@ -232,14 +283,21 @@ def generate_design_space():
 def download_design_space(filename):
     """Download a design space file."""
     filename = secure_filename(filename)
-    filepath = resolve_dataset_path(f"designspaces/{filename}")
-    if not filepath:
-        return jsonify({'success': False, 'error': 'File not found'}), 404
-    design_space_dir = os.path.dirname(filepath)
-    
-    # Verify path is within allowed directory
-    if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
-        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    scope = request.args.get('scope')
+    if scope in {'session', 'shared'}:
+        design_space_dir, filepath, error = _resolve_designspace_by_scope(filename, scope)
+        if error:
+            return jsonify({'success': False, 'error': error}), 403
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+    else:
+        filepath = resolve_dataset_path(f"designspaces/{filename}")
+        if not filepath:
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        design_space_dir = os.path.dirname(filepath)
+
+        if not _is_within_directory(filepath, design_space_dir):
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
     
     return send_from_directory(design_space_dir, filename, as_attachment=True)
 
@@ -249,12 +307,17 @@ def delete_design_space(filename):
     """Delete a design space file."""
     try:
         filename = secure_filename(filename)
-        design_space_dir = get_session_designspace_dir(create=True)
-        filepath = os.path.join(design_space_dir, filename)
-        
-        # Verify path is within allowed directory
-        if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
-            return jsonify({'success': False, 'error': 'Access denied'}), 403
+        scope = request.args.get('scope', 'session')
+
+        if scope == "shared" and not _is_local_request():
+            return jsonify({
+                'success': False,
+                'error': 'Shared demo files can only be deleted from the local app.'
+            }), 403
+
+        design_space_dir, filepath, error = _resolve_designspace_by_scope(filename, scope)
+        if error:
+            return jsonify({'success': False, 'error': error}), 403
         
         if os.path.exists(filepath):
             os.remove(filepath)
@@ -322,14 +385,19 @@ def get_design_space_data(filename):
     Returns columns with metadata (including which have NaN values) and all data rows.
     """
     filename = secure_filename(filename)
-    filepath = resolve_dataset_path(f"designspaces/{filename}")
-    if not filepath:
-        return jsonify({'success': False, 'error': 'File not found.'}), 404
-    design_space_dir = os.path.dirname(filepath)
-    
-    # Security check
-    if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
-        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    scope = request.args.get('scope')
+    if scope in {'session', 'shared'}:
+        design_space_dir, filepath, error = _resolve_designspace_by_scope(filename, scope)
+        if error:
+            return jsonify({'success': False, 'error': error}), 403
+    else:
+        filepath = resolve_dataset_path(f"designspaces/{filename}")
+        if not filepath:
+            return jsonify({'success': False, 'error': 'File not found.'}), 404
+        design_space_dir = os.path.dirname(filepath)
+
+        if not _is_within_directory(filepath, design_space_dir):
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
     
     if not os.path.exists(filepath):
         return jsonify({'success': False, 'error': 'File not found.'}), 404
@@ -374,14 +442,24 @@ def save_design_space_data(filename):
     Expects JSON body: { column: "column_name", updates: { row_index: value, ... } }
     """
     filename = secure_filename(filename)
-    filepath = resolve_dataset_path(f"designspaces/{filename}")
-    if not filepath:
-        return jsonify({'success': False, 'error': 'File not found.'}), 404
-    design_space_dir = os.path.dirname(filepath)
-    
-    # Security check
-    if not os.path.abspath(filepath).startswith(os.path.abspath(design_space_dir)):
-        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    scope = request.args.get('scope')
+    if scope in {'session', 'shared'}:
+        if scope == "shared" and not _is_local_request():
+            return jsonify({
+                'success': False,
+                'error': 'Shared demo files can only be edited from the local app.'
+            }), 403
+        design_space_dir, filepath, error = _resolve_designspace_by_scope(filename, scope)
+        if error:
+            return jsonify({'success': False, 'error': error}), 403
+    else:
+        filepath = resolve_dataset_path(f"designspaces/{filename}")
+        if not filepath:
+            return jsonify({'success': False, 'error': 'File not found.'}), 404
+        design_space_dir = os.path.dirname(filepath)
+
+        if not _is_within_directory(filepath, design_space_dir):
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
     
     if not os.path.exists(filepath):
         return jsonify({'success': False, 'error': 'File not found.'}), 404
