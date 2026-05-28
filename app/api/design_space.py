@@ -175,17 +175,41 @@ def design_space():
                         'source_label': source_label,
                         'can_mutate': scope == "session" or can_mutate_shared,
                     })
-    return render_template('design_space.html', history=history)
+    return render_template(
+        'design_space.html',
+        history=history,
+        generation_error=request.args.get('error'),
+        generated_filename=request.args.get('generated'),
+    )
+
+
+def _generation_error(message):
+    return redirect(url_for('design_space.design_space', error=message))
 
 
 @design_space_bp.route('/generate-design-space', methods=['POST'])
 def generate_design_space():
     """Generate a new design space from form data."""
     data = request.form
-    material_name = data.get('material_name')
-    feature_names = data.getlist('feature_name')
+    material_name = (data.get('material_name') or '').strip()
+    feature_names = [name.strip() for name in data.getlist('feature_name')]
     feature_types = data.getlist('feature_type')
-    target_names = data.getlist('target_name')
+    target_names = [name.strip() for name in data.getlist('target_name') if name.strip()]
+
+    if not material_name:
+        return _generation_error("Please enter a material name.")
+
+    if not secure_filename(material_name):
+        return _generation_error("Please use at least one letter or number in the material name.")
+
+    if not feature_names or not any(feature_names):
+        return _generation_error("Please add at least one feature before generating a design space.")
+
+    if len(feature_names) != len(feature_types) or any(not name for name in feature_names):
+        return _generation_error("Please complete every feature name and type.")
+
+    if not target_names:
+        return _generation_error("Please add at least one target property before generating a design space.")
 
     feature_definitions = []
     total_combinations = 1
@@ -206,7 +230,7 @@ def generate_design_space():
                 min_val = float(min_list[continuous_idx])
                 max_val = float(max_list[continuous_idx])
                 if min_val > max_val:
-                    return "Invalid range for continuous feature.", 400
+                    return _generation_error("Continuous feature minimum cannot be greater than maximum.")
                 feature['min'] = min_val
                 feature['max'] = max_val
                 
@@ -218,7 +242,7 @@ def generate_design_space():
                     # n_points mode
                     n_points = int(n_points_str)
                     if n_points < 2:
-                        return "n_points must be at least 2 for continuous feature.", 400
+                        return _generation_error("n_points must be at least 2 for continuous features.")
                     feature['n_points'] = n_points
                     feature['step'] = None
                     total_combinations *= n_points
@@ -226,17 +250,17 @@ def generate_design_space():
                     # step mode
                     step_val = float(step_str)
                     if step_val <= 0:
-                        return "Step must be positive for continuous feature.", 400
+                        return _generation_error("Step must be positive for continuous features.")
                     feature['step'] = step_val
                     feature['n_points'] = None
                     total_combinations *= int((max_val - min_val) // step_val) + 1
                 else:
-                    return "Either step or n_points must be specified for continuous feature.", 400
+                    return _generation_error("Enter either a step value or n_points for each continuous feature.")
                 
                 continuous_idx += 1
             except (ValueError, IndexError) as e:
                 logger.error(f"Error parsing continuous feature: {e}")
-                return "Invalid input for continuous feature.", 400
+                return _generation_error("Invalid input for a continuous feature.")
         else:
             # Discrete or categorical
             try:
@@ -244,17 +268,17 @@ def generate_design_space():
                 values_str = values_list[discrete_idx] if discrete_idx < len(values_list) else ''
                 values = [v.strip() for v in values_str.split(',') if v.strip()]
                 if not values:
-                    return "Empty values for discrete/categorical feature.", 400
+                    return _generation_error("Enter comma-separated values for every discrete or categorical feature.")
                 feature['values'] = values
                 total_combinations *= len(values)
                 discrete_idx += 1
             except (ValueError, IndexError) as e:
                 logger.error(f"Error parsing discrete/categorical feature: {e}")
-                return "Invalid input for discrete/categorical feature.", 400
+                return _generation_error("Invalid input for a discrete or categorical feature.")
         feature_definitions.append(feature)
 
     if total_combinations > 100000 and 'confirm' not in data:
-        return "Dataset is too large. Please confirm to proceed.", 400
+        return _generation_error("Dataset is too large. Please confirm generation in the dialog.")
 
     design_space_dir = get_session_designspace_dir(create=True)
     os.makedirs(design_space_dir, exist_ok=True)
@@ -271,12 +295,7 @@ def generate_design_space():
     filepath = os.path.join(design_space_dir, filename)
     df.to_csv(filepath, index=False)
 
-    if data.get('action') == 'open':
-        session['filepath'] = filepath
-        session['filename'] = filename
-        return redirect(url_for('main.dashboard', ds=filename))
-
-    return redirect(url_for('design_space.design_space'))
+    return redirect(url_for('design_space.design_space', generated=filename))
 
 
 @design_space_bp.route('/download-design-space/<filename>')

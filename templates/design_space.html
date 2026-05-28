@@ -2,14 +2,24 @@
 {% block content %}
 <div class="container mt-4">
     <h3>Design Space Builder</h3>
-    <p class="text-muted">Define candidate features and target columns, then generate the CSV that Material Discovery
-        will rank.</p>
+    <p class="text-muted">Define candidate features and target columns, then generate a session design space. Use Edit
+        to add initial target labels before running Material Discovery.</p>
     <div class="alert alert-light border d-flex flex-wrap align-items-center gap-2">
         <strong>Closed-loop handoff:</strong>
-        <span>Design spaces open directly in Material Discovery. Synced lab values from Results are written back to the
-            same CSV so the next run trains on the updated measurements.</span>
+        <span>Generate the candidate grid, edit target labels for known or initial samples, then run Material Discovery.
+            Synced lab values from Results are written back to the same CSV for the next cycle.</span>
         <a class="btn btn-sm btn-outline-primary ms-auto" href="/dashboard">Open Material Discovery</a>
     </div>
+
+    {% if generation_error %}
+    <div class="alert alert-danger" id="server-generation-alert">{{ generation_error }}</div>
+    {% elif generated_filename %}
+    <div class="alert alert-success" id="server-generation-alert">
+        Generated <strong>{{ generated_filename }}</strong>. Use Edit to add target labels, then open it in Material
+        Discovery.
+    </div>
+    {% endif %}
+    <div class="alert d-none" id="generation-alert" role="alert"></div>
 
     <form id="design-space-form" action="/generate-design-space" method="POST">
         <div class="mb-3">
@@ -69,9 +79,7 @@
 
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                <button type="submit" name="action" value="save" class="btn btn-primary">Generate & Save CSV</button>
-                <button type="submit" name="action" value="open" class="btn btn-success">Generate & Open in Material
-                    Discovery</button>
+                <button type="submit" class="btn btn-primary">Generate</button>
             </div>
             <div id="row-count-preview" class="text-muted"></div>
         </div>
@@ -257,11 +265,16 @@
         const targetRowTemplate = document.getElementById('target-row-template');
         const form = document.getElementById('design-space-form');
         const rowCountPreview = document.getElementById('row-count-preview');
+        const generationAlert = document.getElementById('generation-alert');
         const confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
         let totalCombinations = 0;
 
         form.addEventListener('submit', function (e) {
-            updateRowCountPreview(); // Make sure the count is up to date
+            updateRowCountPreview();
+            if (!validateDesignSpaceForm()) {
+                e.preventDefault();
+                return;
+            }
             if (totalCombinations > 100000) {
                 e.preventDefault();
                 confirmationModal.show();
@@ -276,6 +289,57 @@
             form.appendChild(confirmInput);
             form.submit();
         });
+
+        function showGenerationMessage(message, type = 'danger') {
+            generationAlert.className = `alert alert-${type}`;
+            generationAlert.textContent = message;
+            generationAlert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function clearGenerationMessage() {
+            generationAlert.className = 'alert d-none';
+            generationAlert.textContent = '';
+        }
+
+        function validateDesignSpaceForm() {
+            clearGenerationMessage();
+
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                showGenerationMessage('Please complete the required fields before generating the design space.');
+                return false;
+            }
+
+            const featureRows = Array.from(document.querySelectorAll('.feature-row'));
+            if (featureRows.length === 0) {
+                showGenerationMessage('Please add at least one feature before generating a design space.');
+                return false;
+            }
+
+            const invalidFeature = featureRows.some(row => {
+                const count = parseInt(row.querySelector('.feature-count')?.textContent || '0', 10);
+                return !Number.isFinite(count) || count <= 0;
+            });
+            if (invalidFeature) {
+                showGenerationMessage('Please complete every feature range or value list so each feature has at least one candidate value.');
+                return false;
+            }
+
+            const targetNames = Array.from(document.querySelectorAll('input[name="target_name"]'))
+                .map(input => input.value.trim())
+                .filter(Boolean);
+            if (targetNames.length === 0) {
+                showGenerationMessage('Please add at least one target property. You can fill known target values with Edit after generation.');
+                return false;
+            }
+
+            if (!Number.isFinite(totalCombinations) || totalCombinations <= 0) {
+                showGenerationMessage('The design space has no candidate rows. Please check the feature definitions.');
+                return false;
+            }
+
+            return true;
+        }
 
         addFeatureButton.addEventListener('click', function () {
             const newRow = featureRowTemplate.content.cloneNode(true);
@@ -642,7 +706,7 @@
             // Show success message
             setTimeout(() => {
                 updateRowCountPreview();
-                alert(`✅ Pre-populated ${features.length} features and ${targets.length} targets from Scenario data!\n\nReview the values and click "Generate & Save CSV" when ready.`);
+                alert(`Pre-populated ${features.length} features and ${targets.length} targets from Scenario data.\n\nReview the values and click "Generate" when ready.`);
             }, 100);
         }
 

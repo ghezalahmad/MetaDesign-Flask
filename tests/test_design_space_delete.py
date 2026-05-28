@@ -1,4 +1,5 @@
 from flask import Flask
+from werkzeug.datastructures import MultiDict
 
 from app.api import design_space as design_space_module
 from app.api.design_space import design_space_bp
@@ -93,3 +94,47 @@ def test_edit_shared_design_space_denied_for_public_host(tmp_path, monkeypatch):
     assert response.status_code == 403
     assert response.get_json()["success"] is False
     assert shared_file.read_text() == "Idx_Sample,target\n1,\n"
+
+
+def test_generate_design_space_requires_target_property(tmp_path, monkeypatch):
+    app, session_root, _ = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    response = client.post("/generate-design-space", data=MultiDict([
+        ("material_name", "Binder"),
+        ("feature_name", "water"),
+        ("feature_type", "continuous"),
+        ("min", "0.1"),
+        ("max", "0.2"),
+        ("step", "0.1"),
+    ]))
+
+    assert response.status_code == 302
+    assert "error=" in response.headers["Location"]
+    assert "target" in response.headers["Location"].lower()
+    assert not (session_root / "session-a" / "designspaces").exists()
+
+
+def test_generate_design_space_creates_session_csv(tmp_path, monkeypatch):
+    app, session_root, _ = _make_design_space_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    _set_session_id(client)
+
+    response = client.post("/generate-design-space", data=MultiDict([
+        ("material_name", "Binder"),
+        ("feature_name", "water"),
+        ("feature_type", "continuous"),
+        ("min", "0.1"),
+        ("max", "0.2"),
+        ("step", "0.1"),
+        ("target_name", "strength"),
+    ]))
+
+    designspace_dir = session_root / "session-a" / "designspaces"
+    generated_files = list(designspace_dir.glob("designspace_Binder_*.csv"))
+
+    assert response.status_code == 302
+    assert "/design-space?generated=designspace_Binder_" in response.headers["Location"]
+    assert len(generated_files) == 1
+    assert "strength" in generated_files[0].read_text()
