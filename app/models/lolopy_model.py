@@ -4,7 +4,23 @@ import pandas as pd
 from lolopy.learners import RandomForestRegressor
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
+from app.models.rf_model import RFModel
 from app.utils.utils import calculate_novelty
+
+
+METADESIGN_MIN_LABELS = 2
+LOLOPY_NATIVE_MIN_LABELS = 8
+
+
+def _early_cycle_warning(labelled_count):
+    remaining = max(LOLOPY_NATIVE_MIN_LABELS - labelled_count, 0)
+    plural = "row" if remaining == 1 else "rows"
+    return (
+        f"Lolopy was run with {labelled_count} labelled rows. "
+        "MetaDesign used its early-cycle Random Forest fallback so active learning can continue "
+        f"from at least {METADESIGN_MIN_LABELS} labelled rows. "
+        f"Add {remaining} more labelled {plural} to switch to native Lolopy uncertainty."
+    )
 
 class LolopyRFModel:
     """
@@ -87,6 +103,20 @@ class LolopyRFModel:
 def train_lolopy_model(data: pd.DataFrame, input_columns: list, target_columns: list, n_estimators: int = 100):
     """Trains a lolopy RandomForestRegressor model."""
     train_df = data.dropna(subset=target_columns)
+    labelled_count = len(train_df)
+
+    if labelled_count < METADESIGN_MIN_LABELS:
+        raise ValueError(
+            f"Lolopy needs at least {METADESIGN_MIN_LABELS} labelled rows to start. "
+            f"Only {labelled_count} labelled row(s) were found."
+        )
+
+    if labelled_count < LOLOPY_NATIVE_MIN_LABELS:
+        fallback_model = RFModel(n_estimators=n_estimators, random_state=42)
+        fallback_model.train(data, input_columns, target_columns)
+        fallback_model.metadesign_warnings = [_early_cycle_warning(labelled_count)]
+        fallback_model.model_backend = "lolopy_early_cycle_rf_fallback"
+        return fallback_model, fallback_model.scaler_x, fallback_model.scaler_y
 
     model_wrapper = LolopyRFModel(
         num_trees=n_estimators,
@@ -94,15 +124,9 @@ def train_lolopy_model(data: pd.DataFrame, input_columns: list, target_columns: 
         target_columns=target_columns
     )
 
-    if train_df.empty:
-        # Create a dummy model with 8 rows if no training data is available, as lolopy requires at least 8 rows.
-        X_train_dummy = pd.DataFrame(np.zeros((8, len(input_columns))), columns=input_columns)
-        y_train_dummy = pd.DataFrame(np.zeros((8, len(target_columns))), columns=target_columns)
-        model_wrapper.train(X_train_dummy, y_train_dummy)
-    else:
-        X_train = train_df[input_columns]
-        y_train = train_df[target_columns]
-        model_wrapper.train(X_train, y_train)
+    X_train = train_df[input_columns]
+    y_train = train_df[target_columns]
+    model_wrapper.train(X_train, y_train)
 
     return model_wrapper, None, None
 
@@ -186,6 +210,9 @@ def evaluate_lolopy_model(model: LolopyRFModel, data: pd.DataFrame, input_column
 
     # 9. Final sorting by Utility (descending) - WEBSLAMD style
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
+    warnings = getattr(model, "metadesign_warnings", [])
+    if warnings:
+        result_df.attrs["warnings"] = warnings
 
     print("✅ evaluate_lolopy_model: result_df shape =", result_df.shape)
     print("✅ evaluate_lolopy_model: columns =", list(result_df.columns))

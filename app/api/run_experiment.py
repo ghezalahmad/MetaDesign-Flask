@@ -382,9 +382,14 @@ def run_experiment():
 
         # Extract LLM trace if present (set by HybridEngine for LLM/Hybrid modes)
         llm_trace = engine_attrs.get('llm_trace') or results_df.attrs.get('llm_trace', None)
+        run_warnings = []
+        run_warnings.extend(engine_attrs.get('warnings', []) or [])
+        run_warnings.extend(results_df.attrs.get('warnings', []) or [])
+        run_warnings = list(dict.fromkeys(run_warnings))
 
         response_data = {
             "success": True,
+            "warnings": run_warnings,
             "results_table": table_html,
             "tsne_figure": tsne_figure,
             "tsne_graph_data": tsne_graph_data,

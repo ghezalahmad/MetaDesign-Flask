@@ -1194,7 +1194,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Stage 2: Render table (fastest)
         setTimeout(() => {
             console.log("📊 Rendering table...");
-            renderTable(data.results_table);
+            renderTable(data.results_table, data.warnings || []);
 
             // Stage 3: Render scatter plot
             setTimeout(() => {
@@ -1771,13 +1771,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // RENDER TABLE SEPARATELY
 
-    function renderTable(tableHtml) {
+    function renderTable(tableHtml, warnings = []) {
         if (resultsDataTable) {
             resultsDataTable.destroy();
             resultsDataTable = null;
         }
 
-        resultsTableContainer.innerHTML = tableHtml;
+        const warningHtml = Array.isArray(warnings) && warnings.length
+            ? `<div class="alert alert-warning">
+                    <strong>Model note:</strong>
+                    ${warnings.map(w => `<div>${escapeHtml(String(w))}</div>`).join('')}
+               </div>`
+            : '';
+        resultsTableContainer.innerHTML = warningHtml + tableHtml;
 
         const newTable = resultsTableContainer.querySelector("table");
         if (newTable) {

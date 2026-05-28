@@ -240,6 +240,7 @@ class HybridEngine:
             acquisition_function=acquisition,
             batch_size=1  # We apply batch selection after fusion
         )
+        ml_attrs = dict(getattr(ml_results_df, 'attrs', {}))
 
         # 2. Get LLM proposal with optimization direction
         agent = cls._get_llm_agent(config)
@@ -312,6 +313,7 @@ class HybridEngine:
             input_columns=input_columns,
             diversity_weight=0.3
         )
+        ml_results_df.attrs.update(ml_attrs)
         logging.info(f"✅ Batch selection: {batch_size} samples selected")
 
         # ── LLM Trace: captured for UI display ──────────────────────────

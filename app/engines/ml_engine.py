@@ -240,6 +240,7 @@ class MLEngine:
         output_size = len(target_columns)
 
         # --- Model Training and Evaluation ---
+        pipeline_warnings = []
         if config_entry:
             if model_name in ['maml', 'reptile', 'protonet', 'pinn']:
                 model = config_entry['model_class'](input_size=input_size, output_size=output_size)
@@ -273,6 +274,9 @@ class MLEngine:
                 results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
             else:
                 results_df = evaluate_func(model, data, input_columns, target_columns, curiosity, weights, max_or_min)
+
+            pipeline_warnings.extend(getattr(model, 'metadesign_warnings', []) or [])
+            pipeline_warnings.extend(results_df.attrs.get('warnings', []) if not results_df.empty else [])
 
         elif model_name == 'ensemble':
             pinn_model = PINNModel(input_size=input_size, output_size=output_size)
@@ -341,6 +345,8 @@ class MLEngine:
             input_columns=input_columns,
             diversity_weight=0.3
         )
+        if pipeline_warnings:
+            results_df.attrs['warnings'] = list(dict.fromkeys(pipeline_warnings))
         logger.info(f"✅ Batch selection: {batch_size} samples selected (diversity_weight=0.3)")
 
         return results_df
