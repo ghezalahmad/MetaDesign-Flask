@@ -54,6 +54,13 @@
                 <a class="btn btn-sm btn-outline-primary ms-auto" href="/dashboard">
                     <i class="bi bi-arrow-repeat"></i> Back to Material Discovery
                 </a>
+                <button class="btn btn-sm btn-outline-success" id="export-session-btn" type="button">
+                    <i class="bi bi-download"></i> Save Session
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="import-session-btn" type="button">
+                    <i class="bi bi-upload"></i> Upload Session
+                </button>
+                <input type="file" id="session-import-file" accept="application/json,.json" hidden>
             </div>
         </div>
     </div>
@@ -317,6 +324,11 @@
         document.getElementById('results-tsne-run-btn').addEventListener('click', () => loadProjectTsne(true));
         document.getElementById('results-tsne-color').addEventListener('change', renderResultsTsnePlot);
         document.getElementById('results-tsne-overlay').addEventListener('change', renderResultsTsnePlot);
+        document.getElementById('export-session-btn').addEventListener('click', exportSessionArchive);
+        document.getElementById('import-session-btn').addEventListener('click', () => {
+            document.getElementById('session-import-file').click();
+        });
+        document.getElementById('session-import-file').addEventListener('change', importSessionArchive);
 
         // Functions
         async function loadAvailableDatasets() {
@@ -384,6 +396,65 @@
                 });
             } catch (err) {
                 console.error('Error loading projects:', err);
+            }
+        }
+
+        async function exportSessionArchive() {
+            try {
+                const response = await fetch('/api/results/session/export');
+                if (!response.ok) throw new Error('Export failed');
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+                link.href = url;
+                link.download = `metadesign-session-${stamp}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error('Error exporting session:', err);
+                alert('Could not export this session.');
+            }
+        }
+
+        async function importSessionArchive(event) {
+            const fileInput = event.target;
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('session_file', file);
+
+            try {
+                const response = await fetch('/api/results/session/import', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert(data.error || 'Could not import this session.');
+                    return;
+                }
+
+                await loadAvailableDatasets();
+                await loadProjects();
+
+                if (data.project_ids && data.project_ids.length > 0) {
+                    currentProjectId = data.project_ids[0];
+                    document.getElementById('project-select').value = currentProjectId;
+                    await loadProject(currentProjectId);
+                }
+
+                alert(`Session restored: ${data.projects_restored} project(s), ${data.datasets_restored} dataset file(s).`);
+            } catch (err) {
+                console.error('Error importing session:', err);
+                alert('Could not import this session.');
+            } finally {
+                fileInput.value = '';
             }
         }
 

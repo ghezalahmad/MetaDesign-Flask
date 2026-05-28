@@ -14,6 +14,7 @@ from flask import (
     session, redirect, url_for, send_from_directory
 )
 from werkzeug.utils import secure_filename
+from app.utils.settings_manager import SettingsManager
 from app.utils.session_store import (
     SHARED_DESIGNSPACE_DIR,
     get_session_id,
@@ -367,6 +368,10 @@ def set_filepath_from_url():
                 data = pd.read_csv(filepath)
                 session['data_columns'] = data.columns.tolist()
                 session['filename'] = filename
+                SettingsManager.save_settings({
+                    'current_dataset': filename,
+                    'current_dataset_columns': data.columns.tolist(),
+                })
                 
                 response = {'success': True, 'columns': data.columns.tolist(), 'filename': filename}
                 return jsonify(response)
@@ -394,6 +399,10 @@ def get_design_space_info():
         session['filepath'] = filepath
         session['filename'] = filename
         session['data_columns'] = df.columns.tolist()
+        SettingsManager.save_settings({
+            'current_dataset': filename,
+            'current_dataset_columns': df.columns.tolist(),
+        })
         
         return jsonify({
             'success': True,

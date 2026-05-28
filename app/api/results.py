@@ -9,15 +9,21 @@ import os
 import json
 import hashlib
 import logging
+import base64
 import numpy as np
 import pandas as pd
+from datetime import datetime
+from pathlib import Path
 from flask import Blueprint, request, jsonify, abort
 from werkzeug.utils import secure_filename
 
-from app.database import db, Project, Cycle, Sample
+from app.database import db, Project, Scenario, Cycle, Sample
 from app.utils.plot_generator import PlotGenerator
+from app.utils.settings_manager import SettingsManager
 from app.utils.session_store import (
+    get_session_designspace_dir,
     get_session_id,
+    get_session_upload_dir,
     list_session_and_shared_datasets,
     resolve_dataset_path,
 )
@@ -32,6 +38,7 @@ TSNE_EXCLUDE_HINTS = {
     'selected_for_lab', 'cycle_number', 'result_sample_id', 'cost'
 }
 TSNE_TARGET_HINTS = ['target', 'strength', 'slump', 'mpa', 'measured_', 'prediction_error_']
+SESSION_ARCHIVE_VERSION = 1
 
 
 def _get_session_project_or_404(project_id):
@@ -205,6 +212,116 @@ def _collect_lab_result_columns(project):
             if col and col not in columns:
                 columns.append(col)
     return columns
+
+
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _dataset_roots():
+    return {
+        "design_space": get_session_designspace_dir(create=True),
+        "uploaded": get_session_upload_dir(create=True),
+    }
+
+
+def _dataset_id_for_path(path):
+    if not path:
+        return None
+    try:
+        resolved = Path(path).resolve()
+    except (TypeError, ValueError):
+        return None
+
+    for kind, root in _dataset_roots().items():
+        try:
+            relative = resolved.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if relative.parts:
+            return f"{kind}:{relative.as_posix()}"
+    return None
+
+
+def _export_session_datasets():
+    datasets = []
+    for kind, root in _dataset_roots().items():
+        if not root.exists():
+            continue
+        for filepath in sorted(root.iterdir()):
+            if not filepath.is_file() or filepath.suffix.lower() not in {".csv", ".xlsx", ".xls"}:
+                continue
+            rel_name = filepath.name
+            datasets.append({
+                "id": f"{kind}:{rel_name}",
+                "kind": kind,
+                "name": rel_name,
+                "encoding": "base64",
+                "content": base64.b64encode(filepath.read_bytes()).decode("ascii"),
+            })
+    return datasets
+
+
+def _export_project(project):
+    scenarios = []
+    active_scenario_index = None
+    for index, scenario in enumerate(project.scenarios):
+        if scenario.id == project.active_scenario_id:
+            active_scenario_index = index
+        scenarios.append({
+            "name": scenario.name,
+            "planned_cycles": scenario.planned_cycles,
+            "samples_per_cycle": scenario.samples_per_cycle,
+            "initial_samples": scenario.initial_samples,
+            "duration_per_cycle_days": scenario.duration_per_cycle_days,
+            "cost_per_sample": scenario.cost_per_sample,
+            "target_coverage": scenario.target_coverage,
+            "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
+            "notes": scenario.notes,
+        })
+
+    cycles = []
+    for cycle in sorted(project.cycles, key=lambda c: c.cycle_number):
+        cycles.append({
+            "cycle_number": cycle.cycle_number,
+            "created_at": cycle.created_at.isoformat() if cycle.created_at else None,
+            "notes": cycle.notes,
+            "lab_result_columns": cycle.get_lab_result_columns(),
+            "samples": [{
+                "idx_sample": sample.idx_sample,
+                "row_data": sample.get_row_data(),
+                "predictions": sample.get_predictions(),
+                "lab_results": sample.get_lab_results(),
+                "status": sample.status,
+                "updated_at": sample.updated_at.isoformat() if sample.updated_at else None,
+            } for sample in sorted(cycle.samples, key=lambda s: s.id)]
+        })
+
+    dataset_ref = _dataset_id_for_path(project.dataset_path)
+    return {
+        "name": project.name,
+        "dataset_ref": dataset_ref,
+        "dataset_name": os.path.basename(project.dataset_path or ""),
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+        "active_scenario_index": active_scenario_index,
+        "scenarios": scenarios,
+        "cycles": cycles,
+    }
+
+
+def _unique_project_name(name):
+    base_name = (name or "Restored Project").strip() or "Restored Project"
+    candidate = base_name
+    counter = 2
+    while Project.query.filter_by(name=candidate, session_id=get_session_id()).first():
+        candidate = f"{base_name} (restored {counter})"
+        counter += 1
+    return candidate
 
 
 def _annotate_results_tsne_rows(df, project, lab_result_columns):
@@ -417,6 +534,135 @@ def list_available_datasets():
     return jsonify({
         'success': True,
         'datasets': list_session_and_shared_datasets()
+    })
+
+
+@results_bp.route('/session/export', methods=['GET'])
+def export_results_session():
+    """Export session datasets and Results workflow state as a portable JSON archive."""
+    projects = Project.query.filter_by(session_id=get_session_id()).order_by(Project.created_at.asc()).all()
+    payload = {
+        "schema": "metadesign-session",
+        "version": SESSION_ARCHIVE_VERSION,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "settings": SettingsManager.strip_sensitive(SettingsManager.load_settings()),
+        "datasets": _export_session_datasets(),
+        "projects": [_export_project(project) for project in projects],
+    }
+    return jsonify(payload)
+
+
+@results_bp.route('/session/import', methods=['POST'])
+def import_results_session():
+    """Import a portable session archive into the current browser session."""
+    try:
+        if "session_file" in request.files:
+            payload = json.load(request.files["session_file"].stream)
+        else:
+            payload = request.get_json()
+    except Exception:
+        return jsonify({'success': False, 'error': 'Could not read the session archive JSON.'}), 400
+
+    if not isinstance(payload, dict) or payload.get("schema") != "metadesign-session":
+        return jsonify({'success': False, 'error': 'This is not a valid MetaDesign session archive.'}), 400
+
+    if int(payload.get("version", 0)) > SESSION_ARCHIVE_VERSION:
+        return jsonify({'success': False, 'error': 'This session archive was created by a newer MetaDesign version.'}), 400
+
+    dataset_path_map = {}
+    restored_datasets = 0
+    for dataset in payload.get("datasets", []):
+        kind = dataset.get("kind")
+        if kind not in _dataset_roots():
+            continue
+        filename = secure_filename(dataset.get("name", ""))
+        if not filename:
+            continue
+        try:
+            content = base64.b64decode(dataset.get("content", ""), validate=True)
+        except Exception:
+            return jsonify({'success': False, 'error': f'Invalid encoded content for dataset {filename}.'}), 400
+
+        target_path = _dataset_roots()[kind] / filename
+        target_path.write_bytes(content)
+        dataset_id = dataset.get("id") or f"{kind}:{filename}"
+        dataset_path_map[dataset_id] = str(target_path.resolve())
+        restored_datasets += 1
+
+    settings = payload.get("settings")
+    if isinstance(settings, dict):
+        SettingsManager.save_settings(settings)
+
+    imported_project_ids = []
+    for project_data in payload.get("projects", []):
+        dataset_path = dataset_path_map.get(project_data.get("dataset_ref"))
+        if not dataset_path and project_data.get("dataset_name"):
+            dataset_path = resolve_dataset_path(project_data.get("dataset_name"), must_exist=False)
+        if not dataset_path:
+            continue
+
+        project = Project(
+            name=_unique_project_name(project_data.get("name")),
+            dataset_path=dataset_path,
+            session_id=get_session_id(),
+            created_at=_parse_iso_datetime(project_data.get("created_at")) or datetime.utcnow(),
+        )
+        db.session.add(project)
+        db.session.flush()
+        imported_project_ids.append(project.id)
+
+        scenario_index_to_id = {}
+        for index, scenario_data in enumerate(project_data.get("scenarios", [])):
+            scenario = Scenario(
+                project_id=project.id,
+                name=scenario_data.get("name") or f"Scenario {index + 1}",
+                planned_cycles=scenario_data.get("planned_cycles", 2),
+                samples_per_cycle=scenario_data.get("samples_per_cycle", 5),
+                initial_samples=scenario_data.get("initial_samples", 10),
+                duration_per_cycle_days=scenario_data.get("duration_per_cycle_days", 30),
+                cost_per_sample=scenario_data.get("cost_per_sample", 100.0),
+                target_coverage=scenario_data.get("target_coverage", 10.0),
+                created_at=_parse_iso_datetime(scenario_data.get("created_at")) or datetime.utcnow(),
+                notes=scenario_data.get("notes"),
+            )
+            db.session.add(scenario)
+            db.session.flush()
+            scenario_index_to_id[index] = scenario.id
+
+        active_index = project_data.get("active_scenario_index")
+        if active_index in scenario_index_to_id:
+            project.active_scenario_id = scenario_index_to_id[active_index]
+
+        for cycle_data in project_data.get("cycles", []):
+            cycle = Cycle(
+                project_id=project.id,
+                cycle_number=cycle_data.get("cycle_number", 1),
+                created_at=_parse_iso_datetime(cycle_data.get("created_at")) or datetime.utcnow(),
+                notes=cycle_data.get("notes"),
+            )
+            cycle.set_lab_result_columns(cycle_data.get("lab_result_columns", []))
+            db.session.add(cycle)
+            db.session.flush()
+
+            for sample_data in cycle_data.get("samples", []):
+                sample = Sample(
+                    cycle_id=cycle.id,
+                    idx_sample=sample_data.get("idx_sample", 0),
+                    status=sample_data.get("status", "pending"),
+                    updated_at=_parse_iso_datetime(sample_data.get("updated_at")) or datetime.utcnow(),
+                )
+                sample.set_row_data(sample_data.get("row_data", {}))
+                sample.set_predictions(sample_data.get("predictions", {}))
+                sample.set_lab_results(sample_data.get("lab_results", {}))
+                sample.status = sample_data.get("status", sample.status)
+                db.session.add(sample)
+
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'datasets_restored': restored_datasets,
+        'projects_restored': len(imported_project_ids),
+        'project_ids': imported_project_ids,
     })
 
 

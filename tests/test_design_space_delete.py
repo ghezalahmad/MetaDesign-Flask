@@ -6,6 +6,7 @@ from werkzeug.datastructures import MultiDict
 from app.api import design_space as design_space_module
 from app.api.design_space import design_space_bp
 from app.utils import session_store
+from app.utils.settings_manager import SettingsManager
 
 
 def _make_design_space_app(tmp_path, monkeypatch):
@@ -15,6 +16,8 @@ def _make_design_space_app(tmp_path, monkeypatch):
 
     monkeypatch.setattr(session_store, "SESSION_ROOT_DIR", session_root)
     monkeypatch.setattr(design_space_module, "SHARED_DESIGNSPACE_DIR", shared_root)
+    SettingsManager._settings_by_path = {}
+    SettingsManager._settings = None
 
     template_dir = Path(__file__).resolve().parents[1] / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
@@ -174,3 +177,25 @@ def test_generate_design_space_remains_visible_without_cookie(tmp_path, monkeypa
     assert generated_files[0].name.encode() in response.data
     assert b"Current session" in response.data
     assert b"No design spaces generated yet" not in response.data
+
+
+def test_design_space_info_persists_current_dataset_setting(tmp_path, monkeypatch):
+    app, session_root, _ = _make_design_space_app(tmp_path, monkeypatch)
+    client_session_id = "browsersessiona123"
+    designspace_dir = session_root / client_session_id / "designspaces"
+    designspace_dir.mkdir(parents=True)
+    designspace_file = designspace_dir / "designspace_created.csv"
+    designspace_file.write_text("Idx_Sample,water,strength\n1,0.4,\n")
+
+    client = app.test_client(use_cookies=False)
+    response = client.get(
+        "/api/design-space-info?filename=designspace_created.csv",
+        headers={"X-MetaDesign-Session": client_session_id},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+
+    settings = (session_root / client_session_id / "settings.json").read_text()
+    assert "designspace_created.csv" in settings
+    assert "current_dataset_columns" in settings
