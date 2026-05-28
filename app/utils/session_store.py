@@ -114,19 +114,29 @@ def resolve_dataset_path(reference, must_exist=True):
     return None
 
 
-def list_session_and_shared_datasets():
-    """Return dataset descriptors visible to the current session."""
+def list_session_and_shared_datasets(include_shared_examples=False):
+    """Return dataset descriptors visible to the current session.
+
+    Public workflows should show only files the user created or uploaded in
+    their own browser session. Bundled repository examples can still be exposed
+    explicitly for demos/tests by passing include_shared_examples=True or by
+    setting SHOW_SHARED_EXAMPLES in Flask config.
+    """
     datasets = []
 
     roots = [
-        ("Design Space", get_session_designspace_dir(create=True), "bi-grid-3x3-gap"),
-        ("Uploaded", get_session_upload_dir(create=True), "bi-file-earmark-spreadsheet"),
-        ("Shared Design Space", SHARED_DESIGNSPACE_DIR, "bi-grid-3x3-gap"),
-        ("Shared Example", DATA_DIR, "bi-file-earmark-spreadsheet"),
+        ("Design Space", get_session_designspace_dir(create=True), "bi-grid-3x3-gap", "design_space"),
+        ("Uploaded Dataset", get_session_upload_dir(create=True), "bi-file-earmark-spreadsheet", "uploaded"),
     ]
 
+    if include_shared_examples or current_app.config.get("SHOW_SHARED_EXAMPLES"):
+        roots.extend([
+            ("Shared Design Space", SHARED_DESIGNSPACE_DIR, "bi-grid-3x3-gap", "shared_design_space"),
+            ("Shared Example", DATA_DIR, "bi-file-earmark-spreadsheet", "shared_example"),
+        ])
+
     seen = set()
-    for source, root, icon in roots:
+    for source, root, icon, kind in roots:
         if not root.exists():
             continue
         for ext in ("*.csv", "*.xlsx", "*.xls"):
@@ -141,6 +151,7 @@ def list_session_and_shared_datasets():
                     "name": filepath.name,
                     "path": str(filepath.resolve()),
                     "source": source,
+                    "kind": kind,
                     "size_kb": round(filepath.stat().st_size / 1024, 1),
                     "icon": icon,
                 })

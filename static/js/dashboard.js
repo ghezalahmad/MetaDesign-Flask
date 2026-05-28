@@ -2564,6 +2564,17 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedSamplesForResults = new Set();
     let currentDatasetPath = null;
 
+    function isProjectForActiveDataset(project) {
+        if (!currentDatasetPath || !project.dataset_path) return true;
+        const projectPath = String(project.dataset_path).replaceAll('\\', '/');
+        const activeReference = String(currentDatasetPath).replaceAll('\\', '/');
+        return projectPath.endsWith(`/${activeReference}`) || projectPath === activeReference;
+    }
+
+    function datasetLabelFromPath(path) {
+        return String(path || '').replaceAll('\\', '/').split('/').pop() || 'dataset';
+    }
+
     // Load projects for dropdown
     async function loadResultsProjects() {
         try {
@@ -2577,12 +2588,21 @@ document.addEventListener("DOMContentLoaded", () => {
             const existingOptions = select.innerHTML;
             select.innerHTML = '<option value="">-- Select project --</option><option value="new">+ Create New Project</option>';
 
-            data.projects.forEach(p => {
+            const compatibleProjects = (data.projects || []).filter(isProjectForActiveDataset);
+            compatibleProjects.forEach(p => {
                 const option = document.createElement('option');
                 option.value = p.id;
-                option.textContent = `${p.name} (${p.cycle_count} cycles)`;
+                option.textContent = `${p.name} (${p.cycle_count} cycles, ${datasetLabelFromPath(p.dataset_path)})`;
                 select.appendChild(option);
             });
+
+            const hiddenCount = (data.projects || []).length - compatibleProjects.length;
+            if (hiddenCount > 0) {
+                const option = document.createElement('option');
+                option.disabled = true;
+                option.textContent = `${hiddenCount} project(s) hidden because they use another dataset`;
+                select.appendChild(option);
+            }
         } catch (err) {
             console.error('Error loading projects:', err);
         }
@@ -2728,8 +2748,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const activeDataset = uploadedDatasets.find(d => d.isActive);
         if (activeDataset) {
             currentDatasetPath = activeDataset.isDesignSpace
-                ? `data/designspaces/${activeDataset.filename}`
-                : `data/${activeDataset.filename}`;
+                ? `designspaces/${activeDataset.filename}`
+                : `uploads/${activeDataset.filename}`;
             console.log('📂 Current dataset path:', currentDatasetPath);
         }
 

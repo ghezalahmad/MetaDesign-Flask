@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app.api.results import results_bp
 from app.database import Cycle, Project, Sample, db
+from app.utils import session_store
 
 
 def _make_app(tmp_path):
@@ -135,3 +136,32 @@ def test_results_tsne_endpoint_returns_cycle_lab_and_error_overlays(tmp_path):
         assert selected[0]["Lab_Status"] == "completed"
         assert selected[0]["Measured_strength"] == 44.5
         assert selected[0]["Prediction_Error_strength"] == 1.5
+
+
+def test_create_cycle_rejects_samples_from_different_dataset(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "DATA_DIR", tmp_path)
+    dataset_a = tmp_path / "dataset_a.csv"
+    dataset_b = tmp_path / "dataset_b.csv"
+    pd.DataFrame({"Idx_Sample": [1], "x": [1.0], "target": [pd.NA]}).to_csv(dataset_a, index=False)
+    pd.DataFrame({"Idx_Sample": [2], "x": [2.0], "target": [pd.NA]}).to_csv(dataset_b, index=False)
+
+    app = _make_app(tmp_path)
+    with app.app_context():
+        project = Project(name="Dataset A", dataset_path=str(dataset_a), session_id="test-session")
+        db.session.add(project)
+        db.session.commit()
+
+        response = app.test_client().post("/api/results/cycles", json={
+            "project_id": project.id,
+            "dataset_path": str(dataset_b),
+            "samples": [{
+                "idx_sample": 2,
+                "row_data": {"Idx_Sample": 2, "x": 2.0},
+                "predictions": {"Predicted_target": 4.2},
+            }],
+            "lab_result_columns": ["target"],
+        })
+
+        assert response.status_code == 400
+        assert "different dataset" in response.get_json()["error"]
+        assert Cycle.query.filter_by(project_id=project.id).count() == 0

@@ -16,7 +16,11 @@ from werkzeug.utils import secure_filename
 
 from app.database import db, Project, Cycle, Sample
 from app.utils.plot_generator import PlotGenerator
-from app.utils.session_store import get_session_id, resolve_dataset_path
+from app.utils.session_store import (
+    get_session_id,
+    list_session_and_shared_datasets,
+    resolve_dataset_path,
+)
 
 results_bp = Blueprint('results', __name__, url_prefix='/api/results')
 logger = logging.getLogger(__name__)
@@ -407,6 +411,15 @@ def get_projects():
     })
 
 
+@results_bp.route('/datasets', methods=['GET'])
+def list_available_datasets():
+    """List session datasets that can be linked to a results project."""
+    return jsonify({
+        'success': True,
+        'datasets': list_session_and_shared_datasets()
+    })
+
+
 @results_bp.route('/projects', methods=['POST'])
 def create_project():
     """Create a new project."""
@@ -544,10 +557,18 @@ def create_cycle():
     
     project = _get_session_project_or_404(project_id)
     
-    # Auto-set dataset_path if not already set
     dataset_path = data.get('dataset_path')
-    if dataset_path and (not project.dataset_path or project.dataset_path == ''):
-        project.dataset_path = resolve_dataset_path(dataset_path, must_exist=False) or project.dataset_path
+    resolved_dataset_path = resolve_dataset_path(dataset_path, must_exist=False) if dataset_path else None
+    if resolved_dataset_path and project.dataset_path:
+        if os.path.abspath(project.dataset_path) != os.path.abspath(resolved_dataset_path):
+            return jsonify({
+                'success': False,
+                'error': 'Selected samples belong to a different dataset than this project. Create or select a project for the active dataset.'
+            }), 400
+
+    # Auto-set dataset_path if not already set
+    if resolved_dataset_path and (not project.dataset_path or project.dataset_path == ''):
+        project.dataset_path = resolved_dataset_path
         db.session.commit()
     
     # Determine the next cycle number

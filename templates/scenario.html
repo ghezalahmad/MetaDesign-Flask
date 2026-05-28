@@ -156,7 +156,16 @@
           <div id="dataset-loading" class="text-muted small mt-1" style="display: none;">
             <span class="spinner-border spinner-border-sm"></span> Loading datasets...
           </div>
-          <small class="text-muted">Select from design spaces or uploaded datasets.</small>
+          <small class="text-muted">Select a session dataset created in Design Space or uploaded in Material
+            Discovery.</small>
+          <div id="dataset-empty-state" class="alert alert-warning small mt-2 mb-0 d-none">
+            No session datasets are available yet. Generate a design space or upload a ready dataset before creating a
+            scenario project.
+            <div class="mt-2 d-flex gap-2 flex-wrap">
+              <a href="/design-space" class="btn btn-sm btn-outline-primary">Create Design Space</a>
+              <a href="/dashboard" class="btn btn-sm btn-outline-primary">Upload Ready Dataset</a>
+            </div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -287,11 +296,16 @@
     async function loadAvailableDatasets() {
       const select = document.getElementById('new-project-dataset');
       const loading = document.getElementById('dataset-loading');
+      const emptyState = document.getElementById('dataset-empty-state');
+      const createButton = document.getElementById('create-project-btn');
 
       if (!select) return;
 
       // Show loading indicator
       if (loading) loading.style.display = 'block';
+      if (emptyState) emptyState.classList.add('d-none');
+      select.disabled = true;
+      if (createButton) createButton.disabled = true;
 
       try {
         const response = await fetch('/api/scenarios/datasets');
@@ -303,6 +317,13 @@
           // Clear existing options except first
           select.innerHTML = '<option value="">-- Select a dataset --</option>';
 
+          if (data.datasets.length === 0) {
+            select.innerHTML = '<option value="">No session datasets available</option>';
+            if (emptyState) emptyState.classList.remove('d-none');
+            console.log('No session datasets available for scenario creation');
+            return;
+          }
+
           // Group datasets by source
           const groups = {};
           data.datasets.forEach(ds => {
@@ -313,7 +334,7 @@
           // Add optgroups for each source
           for (const [source, datasets] of Object.entries(groups)) {
             const optgroup = document.createElement('optgroup');
-            optgroup.label = source === 'Design Space' ? '📊 Design Spaces' : '📁 Uploaded Datasets';
+            optgroup.label = source === 'Design Space' ? 'Created Design Spaces' : 'Uploaded Datasets';
 
             datasets.forEach(ds => {
               const option = document.createElement('option');
@@ -325,11 +346,15 @@
             select.appendChild(optgroup);
           }
 
+          select.disabled = false;
+          if (createButton) createButton.disabled = false;
+
           console.log(`✅ Loaded ${data.datasets.length} available datasets`);
         }
       } catch (err) {
         console.error('Error loading datasets:', err);
         select.innerHTML = '<option value="">Error loading datasets</option>';
+        if (emptyState) emptyState.classList.remove('d-none');
       } finally {
         if (loading) loading.style.display = 'none';
       }
@@ -684,7 +709,7 @@
       }
 
       if (!dataset) {
-        alert('Please select a dataset');
+        alert('Please first generate a design space or upload a ready dataset, then select it here.');
         return;
       }
 

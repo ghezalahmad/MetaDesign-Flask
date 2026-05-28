@@ -62,22 +62,31 @@
     <div class="card mb-4">
         <div class="card-body">
             <div class="row align-items-end">
-                <div class="col-md-4">
+                <div class="col-lg-3 col-md-6">
                     <label class="form-label fw-bold">Select Project</label>
                     <select class="form-select" id="project-select">
                         <option value="">-- Select a project --</option>
                     </select>
                 </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-bold">Or Create New</label>
-                    <div class="input-group">
-                        <input type="text" class="form-control" id="new-project-name" placeholder="Project name">
-                        <button class="btn btn-primary" id="create-project-btn">
-                            <i class="bi bi-plus-lg"></i> Create
-                        </button>
+                <div class="col-lg-3 col-md-6">
+                    <label class="form-label fw-bold">New Project Name</label>
+                    <input type="text" class="form-control" id="new-project-name" placeholder="Project name">
+                </div>
+                <div class="col-lg-4 col-md-8">
+                    <label class="form-label fw-bold">Dataset for New Project</label>
+                    <select class="form-select" id="new-project-dataset">
+                        <option value="">-- Select a session dataset --</option>
+                    </select>
+                    <div id="results-dataset-empty" class="form-text text-warning" style="display: none;">
+                        Generate a design space or upload a dataset in Material Discovery first.
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-lg-2 col-md-4">
+                    <button class="btn btn-primary w-100" id="create-project-btn">
+                        <i class="bi bi-plus-lg"></i> Create
+                    </button>
+                </div>
+                <div class="col-12 mt-3">
                     <div id="project-info" class="alert alert-info py-2 mb-0" style="display: none;">
                         <strong>Sync target:</strong> <span id="dataset-path"></span>
                     </div>
@@ -284,9 +293,11 @@
         let currentProjectId = null;
         let currentProject = null;
         let allColumns = new Set();
+        let availableDatasets = [];
 
         // Load projects on page load
         loadProjects();
+        loadAvailableDatasets();
 
         // Event Listeners
         document.getElementById('project-select').addEventListener('change', function () {
@@ -308,6 +319,55 @@
         document.getElementById('results-tsne-overlay').addEventListener('change', renderResultsTsnePlot);
 
         // Functions
+        async function loadAvailableDatasets() {
+            const select = document.getElementById('new-project-dataset');
+            const emptyState = document.getElementById('results-dataset-empty');
+            const createButton = document.getElementById('create-project-btn');
+            if (!select) return;
+
+            select.disabled = true;
+            if (createButton) createButton.disabled = true;
+            if (emptyState) emptyState.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/results/datasets');
+                const data = await response.json();
+                availableDatasets = data.datasets || [];
+                select.innerHTML = '<option value="">-- Select a session dataset --</option>';
+
+                if (!data.success || availableDatasets.length === 0) {
+                    select.innerHTML = '<option value="">No session datasets available</option>';
+                    if (emptyState) emptyState.style.display = 'block';
+                    return;
+                }
+
+                const groups = {};
+                availableDatasets.forEach(ds => {
+                    if (!groups[ds.source]) groups[ds.source] = [];
+                    groups[ds.source].push(ds);
+                });
+
+                Object.entries(groups).forEach(([source, datasets]) => {
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = source === 'Design Space' ? 'Created Design Spaces' : 'Uploaded Datasets';
+                    datasets.forEach(ds => {
+                        const option = document.createElement('option');
+                        option.value = ds.path;
+                        option.textContent = `${ds.name} (${ds.size_kb} KB)`;
+                        optgroup.appendChild(option);
+                    });
+                    select.appendChild(optgroup);
+                });
+
+                select.disabled = false;
+                if (createButton) createButton.disabled = false;
+            } catch (err) {
+                console.error('Error loading datasets:', err);
+                select.innerHTML = '<option value="">Error loading datasets</option>';
+                if (emptyState) emptyState.style.display = 'block';
+            }
+        }
+
         async function loadProjects() {
             try {
                 const response = await fetch('/api/results/projects');
@@ -329,16 +389,19 @@
 
         async function createProject() {
             const nameInput = document.getElementById('new-project-name');
+            const datasetSelect = document.getElementById('new-project-dataset');
             const name = nameInput.value.trim();
+            const datasetPath = datasetSelect.value;
 
             if (!name) {
                 alert('Please enter a project name');
                 return;
             }
 
-            // Get current dataset path from session or prompt
-            const datasetPath = prompt('Enter the path to the dataset CSV file:', '/path/to/dataset.csv');
-            if (!datasetPath) return;
+            if (!datasetPath) {
+                alert('Please first generate a design space or upload a ready dataset, then select it here.');
+                return;
+            }
 
             try {
                 const response = await fetch('/api/results/projects', {
@@ -351,6 +414,7 @@
 
                 if (data.success) {
                     nameInput.value = '';
+                    datasetSelect.selectedIndex = 0;
                     await loadProjects();
                     document.getElementById('project-select').value = data.project.id;
                     loadProject(data.project.id);
