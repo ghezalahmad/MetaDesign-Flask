@@ -81,3 +81,33 @@ def test_dataset_registry_lists_only_current_session_files_by_default(tmp_path, 
         assert names == {"uploaded.csv", "designspace_created.csv"}
         assert sources["uploaded.csv"] == "Uploaded Dataset"
         assert sources["designspace_created.csv"] == "Design Space"
+
+
+def test_dataset_registry_accepts_browser_session_header_without_cookie(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "SESSION_ROOT_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(session_store, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(session_store, "SHARED_DESIGNSPACE_DIR", tmp_path / "data" / "designspaces")
+
+    session_root = tmp_path / "sessions" / "browsersessiona123"
+    upload_dir = session_root / "uploads"
+    designspace_dir = session_root / "designspaces"
+    upload_dir.mkdir(parents=True)
+    designspace_dir.mkdir(parents=True)
+    (upload_dir / "uploaded.csv").write_text("Idx_Sample,target\n1,\n")
+    (designspace_dir / "designspace_created.csv").write_text("Idx_Sample,target\n1,\n")
+
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="test-secret")
+    app.register_blueprint(scenarios_bp)
+    app.register_blueprint(results_bp)
+
+    client = app.test_client(use_cookies=False)
+
+    for endpoint in ["/api/scenarios/datasets", "/api/results/datasets"]:
+        response = client.get(endpoint, headers={
+            "X-MetaDesign-Session": "browsersessiona123",
+        })
+        assert response.status_code == 200
+        names = {dataset["name"] for dataset in response.get_json()["datasets"]}
+
+        assert names == {"uploaded.csv", "designspace_created.csv"}

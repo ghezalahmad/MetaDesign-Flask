@@ -40,6 +40,80 @@
     <!-- ✅ Removed the old Plotly v1.x include -->
     <!-- Bootstrap JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function () {
+            const storageKey = 'metadesign_client_session_id';
+
+            function makeClientSessionId() {
+                if (window.crypto && crypto.randomUUID) {
+                    return crypto.randomUUID().replace(/-/g, '');
+                }
+                return 'sid_' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+            }
+
+            function getClientSessionId() {
+                let sessionId = localStorage.getItem(storageKey);
+                if (!sessionId) {
+                    sessionId = makeClientSessionId();
+                    localStorage.setItem(storageKey, sessionId);
+                }
+                return sessionId;
+            }
+
+            const clientSessionId = getClientSessionId();
+            window.metaDesignSessionId = clientSessionId;
+
+            document.addEventListener('submit', function (event) {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement)) return;
+
+                let input = form.querySelector('input[name="client_session_id"]');
+                if (!input) {
+                    input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'client_session_id';
+                    form.appendChild(input);
+                }
+                input.value = clientSessionId;
+            }, true);
+
+            const originalFetch = window.fetch.bind(window);
+            window.fetch = function (resource, config) {
+                const nextConfig = Object.assign({}, config || {});
+                let url = '';
+                if (typeof resource === 'string') {
+                    url = resource;
+                } else if (resource && resource.url) {
+                    url = resource.url;
+                }
+
+                const resolved = new URL(url || window.location.href, window.location.href);
+                if (resolved.origin === window.location.origin) {
+                    const requestHeaders = (typeof Request !== 'undefined' && resource instanceof Request)
+                        ? resource.headers
+                        : undefined;
+                    const headers = new Headers(nextConfig.headers || requestHeaders);
+                    headers.set('X-MetaDesign-Session', clientSessionId);
+                    nextConfig.headers = headers;
+                }
+                return originalFetch(resource, nextConfig);
+            };
+
+            document.addEventListener('click', function (event) {
+                const link = event.target.closest('a[href]');
+                if (!link || link.hasAttribute('download')) return;
+
+                const href = link.getAttribute('href');
+                if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+
+                const url = new URL(href, window.location.href);
+                if (url.origin !== window.location.origin) return;
+
+                url.searchParams.set('client_session_id', clientSessionId);
+                link.href = url.pathname + url.search + url.hash;
+            }, true);
+        }());
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>

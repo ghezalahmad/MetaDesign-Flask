@@ -16,6 +16,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 from app.utils.session_store import (
     SHARED_DESIGNSPACE_DIR,
+    get_session_id,
     get_session_designspace_dir,
     resolve_dataset_path,
 )
@@ -184,7 +185,11 @@ def design_space():
 
 
 def _generation_error(message):
-    return redirect(url_for('design_space.design_space', error=message))
+    return redirect(url_for(
+        'design_space.design_space',
+        error=message,
+        client_session_id=get_session_id(),
+    ))
 
 
 @design_space_bp.route('/generate-design-space', methods=['POST'])
@@ -295,7 +300,11 @@ def generate_design_space():
     filepath = os.path.join(design_space_dir, filename)
     df.to_csv(filepath, index=False)
 
-    return redirect(url_for('design_space.design_space', generated=filename))
+    return redirect(url_for(
+        'design_space.design_space',
+        generated=filename,
+        client_session_id=get_session_id(),
+    ))
 
 
 @design_space_bp.route('/download-design-space/<filename>')

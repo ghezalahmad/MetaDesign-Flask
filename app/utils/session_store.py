@@ -4,7 +4,7 @@ import os
 import uuid
 from pathlib import Path
 
-from flask import current_app, has_request_context, session
+from flask import current_app, has_request_context, request, session
 from werkzeug.utils import secure_filename
 
 
@@ -15,10 +15,40 @@ SESSION_ROOT_DIR = DATA_DIR / "sessions"
 SESSION_ID_KEY = "metadesign_session_id"
 
 
+def _request_client_session_id():
+    if not has_request_context():
+        return None
+
+    candidates = [
+        request.headers.get("X-MetaDesign-Session"),
+        request.args.get("client_session_id"),
+        request.args.get("sid"),
+    ]
+
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        candidates.append(request.form.get("client_session_id"))
+        if request.is_json:
+            payload = request.get_json(silent=True) or {}
+            if isinstance(payload, dict):
+                candidates.append(payload.get("client_session_id"))
+
+    for candidate in candidates:
+        candidate = secure_filename(str(candidate or ""))
+        if len(candidate) >= 12:
+            return candidate[:64]
+
+    return None
+
+
 def get_session_id():
     """Return a stable id for the current browser session."""
     if not has_request_context():
         return "global"
+
+    client_session_id = _request_client_session_id()
+    if client_session_id:
+        session[SESSION_ID_KEY] = client_session_id
+        return client_session_id
 
     if current_app.config.get("TESTING") and SESSION_ID_KEY not in session:
         session[SESSION_ID_KEY] = "test-session"

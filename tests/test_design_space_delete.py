@@ -1,4 +1,6 @@
-from flask import Flask
+from pathlib import Path
+
+from flask import Blueprint, Flask
 from werkzeug.datastructures import MultiDict
 
 from app.api import design_space as design_space_module
@@ -14,8 +16,16 @@ def _make_design_space_app(tmp_path, monkeypatch):
     monkeypatch.setattr(session_store, "SESSION_ROOT_DIR", session_root)
     monkeypatch.setattr(design_space_module, "SHARED_DESIGNSPACE_DIR", shared_root)
 
-    app = Flask(__name__)
+    template_dir = Path(__file__).resolve().parents[1] / "templates"
+    app = Flask(__name__, template_folder=str(template_dir))
     app.config.update(TESTING=True, SECRET_KEY="test-secret")
+    main_bp = Blueprint("main", __name__)
+
+    @main_bp.route("/dashboard")
+    def dashboard():
+        return "dashboard"
+
+    app.register_blueprint(main_bp)
     app.register_blueprint(design_space_bp)
     return app, session_root, shared_root
 
@@ -138,3 +148,29 @@ def test_generate_design_space_creates_session_csv(tmp_path, monkeypatch):
     assert "/design-space?generated=designspace_Binder_" in response.headers["Location"]
     assert len(generated_files) == 1
     assert "strength" in generated_files[0].read_text()
+
+
+def test_generate_design_space_remains_visible_without_cookie(tmp_path, monkeypatch):
+    app, session_root, _ = _make_design_space_app(tmp_path, monkeypatch)
+    client_session_id = "browsersessiona123"
+    client = app.test_client(use_cookies=False)
+
+    response = client.post("/generate-design-space", data=MultiDict([
+        ("client_session_id", client_session_id),
+        ("material_name", "Binder"),
+        ("feature_name", "water"),
+        ("feature_type", "continuous"),
+        ("min", "0.1"),
+        ("max", "0.2"),
+        ("step", "0.1"),
+        ("target_name", "strength"),
+    ]), follow_redirects=True)
+
+    designspace_dir = session_root / client_session_id / "designspaces"
+    generated_files = list(designspace_dir.glob("designspace_Binder_*.csv"))
+
+    assert response.status_code == 200
+    assert len(generated_files) == 1
+    assert generated_files[0].name.encode() in response.data
+    assert b"Current session" in response.data
+    assert b"No design spaces generated yet" not in response.data
