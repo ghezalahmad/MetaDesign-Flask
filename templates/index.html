@@ -17,6 +17,13 @@
             <a href="/scenario" class="btn btn-outline ms-2">
                 <i class="bi bi-diagram-3"></i> Plan Scenario
             </a>
+            <button class="btn btn-outline ms-2" id="load-demo-dataset-home" type="button">
+                <i class="bi bi-file-earmark-spreadsheet"></i> Load Demo Dataset
+            </button>
+            <div class="alert alert-info mt-4 mb-0">
+                Data is session-scoped. Use Save Session on the Results page to keep your work before closing the
+                browser.
+            </div>
         </div>
     </section>
 
@@ -67,4 +74,37 @@
         </div>
     </section>
 </main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.getElementById('load-demo-dataset-home')?.addEventListener('click', async function () {
+        const button = this;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading...';
+
+        try {
+            const response = await fetch('/api/demo-datasets/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await response.json();
+            if (!data.success) {
+                alert(data.error || 'Could not load the demo dataset.');
+                return;
+            }
+            const sessionId = window.metaDesignSessionId || '';
+            const query = sessionId ? `?client_session_id=${encodeURIComponent(sessionId)}` : '';
+            window.location.href = `/dashboard${query}`;
+        } catch (err) {
+            console.error('Error loading demo dataset:', err);
+            alert('Could not load the demo dataset.');
+        } finally {
+            button.disabled = false;
+            button.innerHTML = original;
+        }
+    });
+</script>
 {% endblock %}

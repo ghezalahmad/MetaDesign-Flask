@@ -18,6 +18,17 @@ The seven added capabilities are:
 
 The results page also includes Decision Intelligence plots for Pareto trade-offs, trust diagnostics, selected batch recommendations, and cost/fidelity awareness. The t-SNE graph window can be redrawn by selected parameters, including `TSNE_X` vs `TSNE_Y`, color fields, and population overlays.
 
+## Public Demo and Session Workflow
+
+MetaDesign is safe for public demos because uploaded datasets, generated design spaces, settings, projects, scenarios, cycles, and lab results are scoped to the current browser session. They are not shown to other users.
+
+- Use **Load Demo Dataset** on the Home or Material Discovery page to copy the curated example dataset into the current session.
+- Use **Save Session** on the Results page before closing the browser. The exported JSON archive contains the session datasets, scenario/project metadata, cycles, selected samples, predictions, and lab results.
+- Use **Upload Session** on the Results page to restore a saved JSON archive into a new browser session.
+- Generated design spaces and uploaded datasets both remain available across Home, Scenario, Material Discovery, and Results inside the same session.
+
+The bundled demo file lives at `data/examples/metadesign_demo_cement.csv`. To replace it with a different public example, add a clean CSV to `data/examples/` and update the demo filename in `app/api/uploads.py`.
+
 ## Active Learning and BO Behavior
 
 The acquisition functions are implemented as design-space ranking tools. They do not mathematically guarantee discovery of the true global optimum, but they prioritize the next experiment using the current surrogate model, target directions, uncertainty, and observed data.
@@ -27,6 +38,17 @@ The acquisition functions are implemented as design-space ranking tools. They do
 - WEBSLAMD, UCB, Expected Improvement, and Thompson Sampling normalize target scales and respect maximize/minimize directions before combining objectives.
 - Classic ML and hybrid ML+LLM modes pass the selected acquisition function into the ML surrogate path. Hybrid mode then fuses normalized ML acquisition utility with the LLM semantic proposal score.
 - LLM-only mode can recommend from the design space through semantic matching and the shared Decision Intelligence layer, but true Bayesian optimization uncertainty requires the ML or hybrid surrogate path.
+
+## LLM Providers
+
+MetaDesign supports local and cloud LLM modes:
+
+- **Local Ollama**: no API key; the user runs Ollama on their own machine.
+- **Mistral API**: user-provided key for the current run.
+- **OpenAI API**: user-provided key for the current run.
+- **Claude/Anthropic API**: user-provided key for the current run.
+
+Cloud API keys entered in the UI are used only for the current run request and are not saved in session settings.
 
 ## Setup
 
@@ -67,3 +89,15 @@ The acquisition functions are implemented as design-space ranking tools. They do
     ```
 
 The application will be available at `http://127.0.0.1:5000`.
+
+## Hugging Face Space Deployment
+
+The public demo can run as a Docker Space. The Space must listen on port `7860`, and the Docker command should start the Flask app through Gunicorn.
+
+After each push to Hugging Face:
+
+1. Wait for the Space rebuild to finish.
+2. Open the Space logs and confirm Gunicorn starts without import errors.
+3. Open the app and click **Load Demo Dataset**.
+4. Run Material Discovery with Lolopy using the demo dataset. With 2-7 labelled rows, the app should show the early-cycle fallback warning instead of a Java/lolopy stack trace.
+5. Send samples to Results, click **Save Session**, then upload the exported JSON to confirm the session restores correctly.

@@ -51,6 +51,7 @@
                 <span><strong>1.</strong> Save lab values</span>
                 <span><strong>2.</strong> Sync to dataset CSV</span>
                 <span><strong>3.</strong> Run the next cycle from the updated dataset</span>
+                <span class="text-muted">Data is session-scoped. Use Save Session to keep your work before closing the browser.</span>
                 <a class="btn btn-sm btn-outline-primary ms-auto" href="/dashboard">
                     <i class="bi bi-arrow-repeat"></i> Back to Material Discovery
                 </a>
@@ -62,6 +63,9 @@
                 </button>
                 <input type="file" id="session-import-file" accept="application/json,.json" hidden>
             </div>
+            <p class="text-muted small mt-2 mb-0">
+                Save Session exports datasets, scenarios, cycles, lab results, and project state as JSON.
+            </p>
         </div>
     </div>
 

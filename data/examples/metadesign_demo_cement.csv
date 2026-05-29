@@ -1,0 +1,13 @@
+Idx_Sample,water_binder_ratio,slag_pct,fly_ash_pct,activator_molarity,curing_temp_c,Experiment_Cost,Fidelity_Level,fc_28d_MPa
+1,0.34,45,15,8,40,118,standard,49.2
+2,0.38,35,20,10,35,112,standard,45.5
+3,0.42,30,25,8,30,104,standard,39.8
+4,0.36,50,10,12,45,130,high,53.1
+5,0.46,20,35,6,25,96,standard,31.4
+6,0.32,55,10,10,50,142,high,
+7,0.40,40,20,12,40,124,standard,
+8,0.44,25,30,10,35,110,standard,
+9,0.37,45,20,14,45,136,high,
+10,0.48,15,40,8,25,92,standard,
+11,0.35,50,15,10,35,126,standard,
+12,0.41,35,30,12,50,138,high,

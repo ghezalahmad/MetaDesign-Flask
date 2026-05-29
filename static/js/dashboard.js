@@ -62,6 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ----- DOM ELEMENTS -----
     const csvUpload = document.getElementById("csv-upload");
     const uploadButton = document.getElementById("upload-button");
+    const loadDemoDatasetButton = document.getElementById("load-demo-dataset-button");
     const datasetTableBody = document.getElementById("dataset-table-body");
 
     const inputColumns = document.getElementById("input-columns");
@@ -639,6 +640,33 @@ document.addEventListener("DOMContentLoaded", () => {
     //  DATASET MANAGEMENT (Keep as is)
     // ==========================================================
 
+    function registerDatasetFromResponse(data, options = {}) {
+        const existingDataset = uploadedDatasets.find(d => d.filename === data.filename);
+        if (existingDataset) {
+            const existingIndex = uploadedDatasets.indexOf(existingDataset);
+            if (options.makeActive) {
+                handleDatasetSelection(existingIndex);
+            }
+            return existingIndex;
+        }
+
+        const newDataset = {
+            filename: data.filename,
+            columns: data.columns,
+            isActive: false,
+            isDesignSpace: Boolean(options.isDesignSpace)
+        };
+        uploadedDatasets.push(newDataset);
+
+        const newIndex = uploadedDatasets.length - 1;
+        addDatasetRow(newDataset, newIndex);
+
+        if (options.makeActive || uploadedDatasets.filter(d => d.isActive).length === 0) {
+            handleDatasetSelection(newIndex);
+        }
+        return newIndex;
+    }
+
     uploadButton.addEventListener("click", () => {
         const file = csvUpload.files[0];
         if (!file) {
@@ -653,20 +681,32 @@ document.addEventListener("DOMContentLoaded", () => {
             .then(r => r.json())
             .then(data => {
                 if (!data.success) return alert("Upload error: " + data.error);
+                registerDatasetFromResponse(data);
+            });
+    });
 
-                const newDataset = {
-                    filename: data.filename,
-                    columns: data.columns,
-                    isActive: false
-                };
-                uploadedDatasets.push(newDataset);
+    loadDemoDatasetButton?.addEventListener("click", () => {
+        const original = loadDemoDatasetButton.innerHTML;
+        loadDemoDatasetButton.disabled = true;
+        loadDemoDatasetButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading demo...';
 
-                const newIndex = uploadedDatasets.length - 1;
-                addDatasetRow(newDataset, newIndex);
-
-                if (uploadedDatasets.filter(d => d.isActive).length === 0) {
-                    handleDatasetSelection(newIndex);
-                }
+        fetch("/api/demo-datasets/load", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) return alert(data.error || "Could not load the demo dataset.");
+                registerDatasetFromResponse(data, { makeActive: true });
+            })
+            .catch(err => {
+                console.error("Error loading demo dataset:", err);
+                alert("Could not load the demo dataset.");
+            })
+            .finally(() => {
+                loadDemoDatasetButton.disabled = false;
+                loadDemoDatasetButton.innerHTML = original;
             });
     });
 
