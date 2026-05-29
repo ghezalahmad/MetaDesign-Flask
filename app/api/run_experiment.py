@@ -356,25 +356,40 @@ def run_experiment():
         
         if len(labeled_data_for_plot) > 2:
             from sklearn.neighbors import KNeighborsRegressor
-            X_labeled = labeled_data_for_plot[input_columns].values
-            y_labeled = labeled_data_for_plot[target_columns].values
+            X_labeled_df, encoded_columns, skipped_columns = PlotGenerator._prepare_tsne_feature_matrix(
+                labeled_data_for_plot,
+                input_columns
+            )
+            y_labeled_df = labeled_data_for_plot[target_columns].apply(pd.to_numeric, errors='coerce')
+            valid_rows = y_labeled_df.notna().all(axis=1)
+            X_labeled_df = X_labeled_df.loc[valid_rows]
+            y_labeled_df = y_labeled_df.loc[valid_rows]
             
-            # Generate cross-val style predictions using KNN
-            k = min(3, len(X_labeled) - 1)
-            predictions_cv = np.zeros_like(y_labeled)
-            
-            for i in range(len(X_labeled)):
-                # Leave-one-out: train on all except i, predict i
-                X_train = np.delete(X_labeled, i, axis=0)
-                y_train = np.delete(y_labeled, i, axis=0)
+            if encoded_columns:
+                logger.debug("Prediction-vs-actual encoded categorical columns: %s", encoded_columns)
+            if skipped_columns:
+                logger.debug("Prediction-vs-actual skipped unusable columns: %s", skipped_columns)
+
+            if len(X_labeled_df) > 2 and X_labeled_df.shape[1] > 0:
+                X_labeled = X_labeled_df.values
+                y_labeled = y_labeled_df.values
                 
-                knn = KNeighborsRegressor(n_neighbors=min(k, len(X_train)), algorithm='ball_tree')
-                knn.fit(X_train, y_train)
-                predictions_cv[i] = knn.predict(X_labeled[i:i+1])
-            
-            # Add predictions to the labeled data
-            for j, col in enumerate(target_columns):
-                labeled_data_for_plot[f'Predicted_{col}'] = predictions_cv[:, j].tolist()
+                # Generate cross-val style predictions using KNN
+                k = min(3, len(X_labeled) - 1)
+                predictions_cv = np.zeros_like(y_labeled, dtype=float)
+                
+                for i in range(len(X_labeled)):
+                    # Leave-one-out: train on all except i, predict i
+                    X_train = np.delete(X_labeled, i, axis=0)
+                    y_train = np.delete(y_labeled, i, axis=0)
+                    
+                    knn = KNeighborsRegressor(n_neighbors=min(k, len(X_train)), algorithm='ball_tree')
+                    knn.fit(X_train, y_train)
+                    predictions_cv[i] = knn.predict(X_labeled[i:i+1])
+                
+                # Add predictions to the labeled data
+                for j, col in enumerate(target_columns):
+                    labeled_data_for_plot.loc[y_labeled_df.index, f'Predicted_{col}'] = predictions_cv[:, j].tolist()
         
         prediction_actual_plot = PlotGenerator.create_prediction_actual_plot(labeled_data_for_plot, target_columns)
         

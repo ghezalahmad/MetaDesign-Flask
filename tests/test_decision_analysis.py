@@ -195,3 +195,61 @@ def test_run_experiment_route_applies_decision_layer_after_engine(tmp_path):
     assert payload["decision_analysis"]["summary"]["selected_count"] == 1
     assert payload["decision_analysis"]["selected_batch"][0]["Decision_Action"] == "Force include"
     assert payload["llm_trace"]["mode"] == "LLM_AGENT_MODE"
+
+
+def test_run_experiment_route_visualizations_accept_categorical_inputs(tmp_path):
+    dataset = pd.DataFrame({
+        "Row number": [1, 2, 3, 4, 5],
+        "water_binder_ratio": [0.34, 0.38, 0.42, 0.36, 0.46],
+        "slag_pct": [45, 35, 30, 50, 20],
+        "Fidelity_Level": ["standard", "standard", "standard", "high", "high"],
+        "fc_28d_MPa": [49.2, 45.5, 39.8, np.nan, np.nan],
+    })
+    dataset_path = tmp_path / "categorical_route_dataset.csv"
+    dataset.to_csv(dataset_path, index=False)
+
+    engine_results = pd.DataFrame({
+        "Row number": [4, 5],
+        "water_binder_ratio": [0.36, 0.46],
+        "slag_pct": [50, 20],
+        "Fidelity_Level": ["high", "high"],
+        "fc_28d_MPa": [53.1, 31.4],
+        "Utility": [0.9, 0.2],
+        "Uncertainty": [0.1, 0.4],
+        "Selected for Testing": [True, False],
+    })
+
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(run_experiment_bp)
+    client = app.test_client()
+
+    with client.session_transaction() as session:
+        session["filepath"] = str(dataset_path)
+
+    empty_plot = {"data": [], "layout": {}}
+    with patch("app.engines.hybrid_engine.HybridEngine.run_experiment", return_value=engine_results), \
+            patch("app.api.run_experiment.PlotGenerator._run_tsne", side_effect=lambda df, *args, **kwargs: df.assign(**{"tsne-2d-one": 0.0, "tsne-2d-two": 0.0})), \
+            patch("app.api.run_experiment.PlotGenerator.create_tsne_input_space_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_target_scatter_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_uncertainty_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_optimization_history_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_utility_surface_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_trajectory_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_distance_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.PlotGenerator.create_feature_importance_plot", return_value=empty_plot), \
+            patch("app.api.run_experiment.TrajectoryTracker.get_trajectory_summary", return_value={}):
+        response = client.post("/run-experiment", json={
+            "model": "lolopy",
+            "curiosity": 0.5,
+            "input_columns": ["water_binder_ratio", "slag_pct", "Fidelity_Level"],
+            "target_columns": [{"name": "fc_28d_MPa", "weight": 1.0, "optimization": "max"}],
+            "apriori_columns": [],
+            "active_learning_mode": "ML_MODE",
+            "batch_size": 1,
+        })
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert "prediction_actual_plot" in payload
