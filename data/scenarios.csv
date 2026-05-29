@@ -1,7 +1,0 @@
-Scenario,Total Cost (EUR),Total Duration (days),Total Duration (months),Total Recipes Tested,Cost per Recipe (EUR),No. of cycles,No. of initial recipes,No. of recipes per cycle,Duration per Cycle (days),Coverage of material space (%)
-Scenario 1,10125,240,8.0,15,675,2,10,5,120,4.5
-Scenario 2,10125,240,8.0,15,675,2,10,5,120,4.5
-Scenario 3,10800,240,8.0,16,675,2,12,4,120,4.8
-Scenario 4,10200,240,8.0,24,425,2,16,8,120,7.3
-Scenario 5 (Selected Scenario),10200,224,7.5,34,300,8,6,4,28,10.3
-Scenario ALL SAMPLES,165000,120,4.0,330,500,1,330,0,120,100.0
