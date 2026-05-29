@@ -392,8 +392,20 @@ def _build_tsne_quality_warnings(df, feature_columns):
         warnings.append("No numeric feature columns are available for t-SNE.")
         return warnings
 
-    feature_df = df[valid_features].apply(pd.to_numeric, errors='coerce')
-    constant_cols = [c for c in valid_features if feature_df[c].nunique(dropna=True) <= 1]
+    feature_df = df[valid_features]
+    numeric_df = feature_df.apply(pd.to_numeric, errors='coerce')
+    categorical_cols = [
+        c for c in valid_features
+        if feature_df[c].notna().any() and numeric_df[c][feature_df[c].notna()].notna().mean() < 0.9
+    ]
+    if categorical_cols:
+        warnings.append(f"Categorical t-SNE feature columns will be one-hot encoded: {', '.join(categorical_cols[:8])}")
+
+    encoded_df = pd.get_dummies(feature_df.fillna("__missing__").astype(str), columns=categorical_cols, dtype=float)
+    for col in encoded_df.columns:
+        encoded_df[col] = pd.to_numeric(encoded_df[col], errors='coerce')
+
+    constant_cols = [c for c in encoded_df.columns if encoded_df[c].nunique(dropna=True) <= 1]
     if constant_cols:
         warnings.append(f"Constant columns do not help t-SNE: {', '.join(constant_cols[:8])}")
 
@@ -401,7 +413,7 @@ def _build_tsne_quality_warnings(df, feature_columns):
     if sparse_cols:
         warnings.append(f"Columns with more than 30% missing values may add noise: {', '.join(sparse_cols[:8])}")
 
-    duplicate_count = int(feature_df.fillna(0).duplicated().sum())
+    duplicate_count = int(encoded_df.fillna(0).duplicated().sum())
     if duplicate_count:
         warnings.append(f"{duplicate_count} rows have duplicate t-SNE feature values.")
 
@@ -420,7 +432,7 @@ def _build_results_tsne_cache_key(project, feature_columns, options):
         'mtime': os.path.getmtime(project.dataset_path),
         'features': feature_columns,
         'options': options,
-        'version': 'results-tsne-v1'
+        'version': 'results-tsne-v2'
     }
     digest = hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=True).encode('utf-8')).hexdigest()[:16]
     return f"{project.dataset_path}_results_tsne_{digest}"

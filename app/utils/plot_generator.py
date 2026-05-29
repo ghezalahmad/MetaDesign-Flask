@@ -10,6 +10,45 @@ class PlotGenerator:
     # Cache to store t-SNE results: key -> DataFrame with tsne columns
     _tsne_cache = {}
 
+    @staticmethod
+    def _prepare_tsne_feature_matrix(df: pd.DataFrame, feature_columns):
+        """Build a numeric t-SNE matrix from numeric and categorical inputs."""
+        if df is None or df.empty or not feature_columns:
+            return pd.DataFrame(index=df.index if df is not None else None), [], []
+
+        prepared_parts = []
+        encoded_columns = []
+        skipped_columns = []
+
+        for column in feature_columns:
+            if column not in df.columns:
+                skipped_columns.append(column)
+                continue
+
+            series = df[column]
+            numeric_series = pd.to_numeric(series, errors="coerce")
+            non_missing = series.notna()
+            numeric_ratio = numeric_series[non_missing].notna().mean() if non_missing.any() else 0.0
+
+            if numeric_ratio >= 0.9:
+                prepared_parts.append(numeric_series.rename(column))
+                continue
+
+            categorical_series = series.fillna("__missing__").astype(str)
+            dummies = pd.get_dummies(categorical_series, prefix=column, dtype=float)
+            if dummies.empty:
+                skipped_columns.append(column)
+                continue
+            prepared_parts.append(dummies)
+            encoded_columns.append(column)
+
+        if not prepared_parts:
+            return pd.DataFrame(index=df.index), encoded_columns, skipped_columns
+
+        matrix = pd.concat(prepared_parts, axis=1)
+        matrix = matrix.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        return matrix.astype(float), encoded_columns, skipped_columns
+
     # ======================================================
     #   TSNE CALCULATION (SLAMD-EXACT WITH NORMALIZATION)
     # ======================================================
@@ -79,12 +118,23 @@ class PlotGenerator:
             df['tsne-2d-two'] = 0.0
             return df
         
-        print(f"✅ TSNE: Running on {len(feature_columns)} features × {len(df)} samples")
-        print(f"   Features: {feature_columns}")
+        print(f"✅ TSNE: Running on {len(feature_columns)} requested features × {len(df)} samples")
+        print(f"   Requested features: {feature_columns}")
         
         try:
             # Prepare feature matrix
-            tsne_input_df = df[feature_columns].fillna(0).astype(float)
+            tsne_input_df, encoded_columns, skipped_columns = cls._prepare_tsne_feature_matrix(df, feature_columns)
+            if tsne_input_df.empty or tsne_input_df.shape[1] == 0:
+                print("⚠️ TSNE: No usable feature columns after numeric/categorical preparation")
+                df['tsne-2d-one'] = 0.0
+                df['tsne-2d-two'] = 0.0
+                return df
+
+            if encoded_columns:
+                print(f"✅ TSNE: One-hot encoded categorical features: {encoded_columns}")
+            if skipped_columns:
+                print(f"⚠️ TSNE: Skipped missing/empty features: {skipped_columns}")
+            print(f"   Prepared matrix columns: {tsne_input_df.shape[1]}")
             
             # CRITICAL: SLAMD STANDARDIZES DATA BEFORE TSNE by default.
             if scaling == "robust":

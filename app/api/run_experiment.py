@@ -33,7 +33,7 @@ def _build_tsne_cache_key(filepath, input_columns):
     feature_signature = hashlib.sha256(
         json.dumps(input_columns or [], ensure_ascii=True).encode("utf-8")
     ).hexdigest()[:16]
-    return f"{filepath}_{mtime}_inputs_{feature_signature}"
+    return f"{filepath}_{mtime}_tsne_v2_inputs_{feature_signature}"
 
 
 def _build_tsne_graph_data(tsne_plot_df, input_columns, target_columns):
