@@ -6,10 +6,26 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.cluster import KMeans
-import streamlit as st
 
 from app.models.bayesian_optimizer import multi_objective_bayesian_optimization
+from app.models.rf_model import RFModel
 from app.utils.utils import calculate_novelty
+
+
+METADESIGN_MIN_LABELS = 2
+PROTONET_NATIVE_MIN_LABELS = 10
+
+
+def _early_cycle_warning(labelled_count):
+    remaining = max(PROTONET_NATIVE_MIN_LABELS - labelled_count, 0)
+    plural = "row" if remaining == 1 else "rows"
+    return (
+        f"ProtoNet was run with {labelled_count} labelled rows. "
+        "MetaDesign used its early-cycle Random Forest fallback so active learning can continue "
+        f"from at least {METADESIGN_MIN_LABELS} labelled rows. "
+        f"Add {remaining} more labelled {plural} to switch to native ProtoNet few-shot training."
+    )
+
 
 class ProtoNetModel(nn.Module):
     def __init__(self, input_size, output_size, embedding_size=256, num_layers=3, dropout_rate=0.3):
@@ -102,9 +118,20 @@ class ProtoNetModel(nn.Module):
 
 def protonet_train(model, data, input_columns, target_columns, epochs=50, learning_rate=0.001, num_tasks=5, num_shot=5, num_query=5):
     labeled_data = data.dropna(subset=target_columns).reset_index(drop=True)
-    if len(labeled_data) < 10:
-        st.error("Not enough labeled samples for Prototypical Network training.")
-        return model, None, None
+    labelled_count = len(labeled_data)
+
+    if labelled_count < METADESIGN_MIN_LABELS:
+        raise ValueError(
+            f"ProtoNet needs at least {METADESIGN_MIN_LABELS} labelled rows to start. "
+            f"Only {labelled_count} labelled row(s) were found."
+        )
+
+    if labelled_count < PROTONET_NATIVE_MIN_LABELS:
+        fallback_model = RFModel(n_estimators=100, random_state=42)
+        fallback_model.train(data, input_columns, target_columns)
+        fallback_model.metadesign_warnings = [_early_cycle_warning(labelled_count)]
+        fallback_model.model_backend = "protonet_early_cycle_rf_fallback"
+        return fallback_model, fallback_model.scaler_x, fallback_model.scaler_y
 
     scaler_x = RobustScaler().fit(data[input_columns])
     scaler_y = RobustScaler().fit(labeled_data[target_columns])
@@ -169,7 +196,6 @@ def evaluate_protonet(model, data, input_columns, target_columns, curiosity, wei
         candidate_df = data[data[target_columns].isnull()].copy()
 
     if candidate_df.empty:
-        st.warning("No candidate samples to evaluate.")
         return pd.DataFrame()
 
     candidate_inputs = candidate_df[input_columns]
@@ -211,4 +237,7 @@ def evaluate_protonet(model, data, input_columns, target_columns, curiosity, wei
         candidate_df.loc[max_utility_idx, "Selected for Testing"] = True
 
     result_df = candidate_df.sort_values(by="Utility", ascending=False).reset_index(drop=True)
+    warnings = getattr(model, "metadesign_warnings", [])
+    if warnings:
+        result_df.attrs["warnings"] = warnings
     return result_df

@@ -28,7 +28,7 @@ class ExperimentPreprocessor:
         'pinn': 3,
         'maml': 5,
         'dkl': 3,
-        'protonet': 3,
+        'protonet': 2,
         'reptile': 3,
     }
     
